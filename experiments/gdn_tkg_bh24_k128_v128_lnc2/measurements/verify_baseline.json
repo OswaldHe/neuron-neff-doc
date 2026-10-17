@@ -1,0 +1,94 @@
+{
+  "case": "gdn_tkg_bh24_k128_v128_lnc2",
+  "runs": 1,
+  "checks": [
+    {
+      "pass": true,
+      "claim": "kernel.neff is a well-formed NEFF",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "same interface and launch shape, still single-rank (see tools/launch_rules.py)",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "run 0: the device ran the NEFF",
+      "detail": "exit 0, 8.34s"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: max_abs_err <= 0.027",
+      "detail": "max_abs_err 2.322e-02 (86% of the limit), cosine 0.999995"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: also within the upstream atol=0.02 rtol=0.02",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: max_abs_err <= 0.027",
+      "detail": "max_abs_err 1.633e-03 (6% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: also within the upstream atol=0.02 rtol=0.02",
+      "detail": "within tol 100.00%"
+    }
+  ],
+  "pass": true,
+  "io_signature": {
+    "inputs": [
+      "q",
+      "k",
+      "v",
+      "b",
+      "a",
+      "A_log",
+      "dt_bias",
+      "z",
+      "norm_weight",
+      "state_in"
+    ],
+    "n_outputs": 4,
+    "num_tpb": 1,
+    "subgraphs": [
+      "sg00",
+      "sg01"
+    ],
+    "members": 89
+  },
+  "max_abs_err_limit": 0.027,
+  "outputs": {
+    "output_0": {
+      "max_abs_err": 0.023222923278808594,
+      "mean_abs_err": 0.0009115145658142865,
+      "max_rel_err": 31.624629974365234,
+      "cosine": 0.9999948740005493,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_1": {
+      "max_abs_err": 0.0016332268714904785,
+      "mean_abs_err": 3.835030292975716e-05,
+      "max_rel_err": 31.92487907409668,
+      "cosine": 0.9999995231628418,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    }
+  }
+}

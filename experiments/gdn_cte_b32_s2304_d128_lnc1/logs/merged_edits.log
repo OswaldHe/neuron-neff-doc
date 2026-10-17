@@ -1,0 +1,74 @@
+72bf8c649612318c9e7d63b2e1951771c133f011
+2026-10-16 20:46:32 +0000
+
+Baseline: nkilib gdn_cte b32 s2304 d128 NEFF, verifier and profiler
+
+kernel.neff is the compiled NEFF of nkilib.experimental.gdn.gdn_cte for
+batch 32, seq_len 2304, head_dim 128, bfloat16, LNC=1, one rank: the slowest
+case in the GDN benchmark at total_exec_time 14.779 ms.
+
+The loop edits kernel.neff only. tools/verify.py runs it on the device against
+a torch golden (max_abs_err <= 8e-4 per output), tools/single_core.py keeps it
+LNC=1 and single-rank, tools/profile.py reports total_exec_time.
+
+========================================================================
+15aaef4ee3367faa66ac05cbffebb9c18ffe0301
+2026-10-16 22:05:03 +0000
+
+Move all 2784 DGE (PSEUDO_DMA_DIRECT2D) slots off the Activation stream onto Pool/SP via an S[72] handshake, cutting Activation busy time 14.9% (14785.5 -> ~14765 us, bit-exact outputs); the measured latency gain is small because the kernel is dependency-bound on the queued spill-reload DMA, not on Activation occupancy.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 14783.3 -> 14760.9 (+0.2%)
+
+========================================================================
+d8d0cf80f8b6e7a13818acca34e82356f4996f19
+2026-10-16 23:04:20 +0000
+
+Restore iter-1's 1392 Pool-hosted DGE slots to Activation (Pool0.bin back to baseline, S[72] renumbered 1..1392) and keep the other 1392 on SP: Pool is the worst DGE host (slowest queue start latency and its in-order stream carries the spill chain that gates PE), so the Activation+SP split beats both all-Activation (14779) and Pool+SP (14771) at 14501 us, -1.88%, bit-exact.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 14760.9 -> 14505.8 (+1.7%)
+
+========================================================================
+065c8ca2ca88a8b71d620fdd7a790ea0bf165b36
+2026-10-17 00:52:43 +0000
+
+Stage the 640 DGE-only "spill" buffers in free SBUF instead of DRAM (they are reshapes, not spills: save and reload touch different SBUF regions), and let 1832 reloads read the original SBUF tile directly -- 242 MB less DRAM traffic and shorter save->reload completion chains: 14502 -> 14381 us (-0.83%), bit-exact, address-only DGE edits.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 14505.8 -> 14381.4 (+0.9%)
+
+========================================================================
+e0260189b5d2a9fb93eebb735c9b6d79bce6ea76
+2026-10-17 01:47:18 +0000
+
+Merge 993 affine runs of identical Activation/DVE instructions (mostly 1-element ACTIVATEs) into single wider-pattern slots and delete the followers: -1.13% (14393 -> 14231 us), semaphore counts and outputs unchanged.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 14381.4 -> 14231.9 (+1.0%)
+
+========================================================================
+0b7bb7337790420849153b5c518a05b25e8140d2
+2026-10-17 02:44:56 +0000
+
+Fuse 188 DGE save/reload staging pairs (saves now write the reload's destination directly, the reload becomes an EVENT_SEMAPHORE pair repaying its +16 via the newly device-verified SEM_ADD_IMM_COMPLETE) and delete 715 provably-dominated EVENT_SEMAPHOREs: -1.41% (14240 -> 14039 us), outputs and semaphore totals unchanged.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 14231.9 -> 14036.2 (+1.4%)
+
+========================================================================
+602e09bd8915bdb995ca0a3ed3ca27089b77f508
+2026-10-17 04:15:10 +0000
+
+Retire 7 provably-dead SBUF-writing DGE transfers (replaced by the iter-5 EVENT_SEMAPHORE +16 pair, -1.4 MB of SB->SB traffic); the iteration's real output is in notes: the DMA transposes are mandatory (nc_matmul already transposes the stationary operand; transpose_mode is nc_transpose), the staging fusion is exhausted, and iter-5's access map was missing 42% of accesses.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 14036.2 -> 14022 (+0.1%)
+
+========================================================================

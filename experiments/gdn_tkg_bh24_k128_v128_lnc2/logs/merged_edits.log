@@ -1,0 +1,85 @@
+ce43cdc346ab09806c7c8ae1f6926eaa8839fa5f
+2026-10-17 06:22:08 +0000
+
+Baseline: nkilib gdn_tkg bh24 k128 v128 LNC=2 NEFF, verifier and profiler
+
+kernel.neff is the compiled NEFF of nkilib.experimental.gdn.gdn_tkg for bh 24
+(batch 2 x 12 v-heads), k_dim 128, v_dim 128, bfloat16, on one logical
+NeuronCore at LNC=2 (sg00 + sg01), one rank: total_exec_time 76.05 us.
+
+The loop edits kernel.neff only. tools/verify.py runs it on the device against a
+torch golden (max_abs_err <= 2.7e-2 per output), tools/launch_rules.py keeps the
+launch shape (exactly two subgraphs, no collectives, no replica groups,
+num_tpb 1), tools/profile.py reports total_exec_time.
+
+========================================================================
+df60817efd49a92f3178a148b5440cd209bbc8f5
+2026-10-17 07:31:15 +0000
+
+Rescheduled the Activation stream: hoisted all 12 silu activations into one wide ACTIVATE on private SBUF buffers and re-ordered the head, cutting ACT_TABLE_LOAD from 22 to 6 per core (76.0 -> 55.6 us, -27%, arithmetic unchanged).
+
+AutoHelix iteration 1
+
+total_exec_time_us: 76.042 -> 55.601 (+26.9%)
+
+========================================================================
+400b689174dc871989fce1d3ee558a72b83c52db
+2026-10-17 08:37:42 +0000
+
+Moved all 36 scale-pointer ACTIVATEs off the saturated ACT engine onto idle DVE as TENSOR_TENSORs with a zero-stride broadcast src1 (two groups collapsing to a single 1536-element instruction) and merged the 12 S->S_bf casts into one wide cast over private contiguous tiles: 55.6 -> 45.0 us (-19%), arithmetic bit-identical.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 55.601 -> 44.612 (+19.8%)
+
+========================================================================
+119bfcf179a825a73281a600e23bb1e14c5b290b
+2026-10-17 09:44:58 +0000
+
+Deleted the 12 ACT PSUM->SBUF `o_sb` COPYs (both readers now read out_p straight from PSUM, bit-exact, all 8 PSUM WAR constraints already implied by the existing happens-before graph), made `z` the first input DMA descriptor instead of the eighth, moved the 12 line-300 S_bf casts from ACT to DVE, and re-ordered the ACT head so DVE stops idling 6.4 us on its first real instruction: 44.8 -> 40.5 us (-9.5%), arithmetic bit-identical.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 44.612 -> 40.74 (+8.7%)
+
+========================================================================
+7bc704d58f1b1ae47f45a75bb0a1f03ba7296f46
+2026-10-17 10:44:35 +0000
+
+Split the state-out state DGE DMA into 4 per-head-group transfers so the tail overlaps compute, pipelined the head's `S *= exp_g` / `CAST S->S_bf` hand-off in two 6-head halves (with DVE's k_f_all scaling and b broadcast hoisted ahead of the S_all input-load wait), and hoisted the ACT T3 table load + `f5 sigmoid` in front of those casts so the body's twelve `* beta_K` ops stop stalling 1.9 us: 41.0 -> 38.6 us (-5.8%), arithmetic bit-identical.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 40.74 -> 38.714 (+5.0%)
+
+========================================================================
+4118dcb9ff8a2455923460dcfe4b87936e496b61
+2026-10-17 12:01:37 +0000
+
+Tightened the 12 PE outer-product s4 waits onto the ACT `cast_delta` that actually produces each `delta_bf` tile — 4 of the 12 casts did not increment s4, so PE waited up to 2.0 us past its data being ready — a pure wait renumbering with no instruction moved: 38.59 -> 38.38 us (-0.5%), arithmetic bit-identical.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 38.714 -> 38.396 (+0.8%)
+
+========================================================================
+88ded90b3b065c4d95a001378b219db06b2b5e01
+2026-10-17 12:52:02 +0000
+
+Took the two wide head `CAST S_all -> S_bf` off the saturated ACT head chain by scheduling them against their real consumer deadlines — cast2 (heads 6-11, first read 10 us later) and a 2-head slice of cast1 moved into ACT's own 1.45 us body gap, the heads 0-3 slice moved onto idle DVE where it lands earlier than ACT produced it, and the ACT `s6>=16` barrier moved behind `f29 q_scale` — so the body now starts 1.4 us sooner: 38.22 -> 36.77 us (-3.8%), arithmetic bit-identical.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 38.396 -> 36.714 (+4.4%)
+
+========================================================================
+582b1a7c8a1c5339ab1700e85acabd3c0787c74e
+2026-10-17 13:53:38 +0000
+
+Moved five of the twelve DVE `out[h] = out_norm * silu_z[h]` sinks forward to just before the DVE slots that stall on PE/ACT — nothing reads `out[h]` but the final DMA, yet they sat in DVE program order on the critical path while DVE had 1.95 us of stalls doing nothing — so the chain behind each issues 0.28 us earlier and the sink runs free: 36.81 -> 36.11 us (-1.9%), arithmetic bit-identical, not one byte changed but the order of five slots.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 36.714 -> 36.175 (+1.5%)
+
+========================================================================

@@ -1,0 +1,136 @@
+{
+  "case": "gdn_tkg_bh24_k128_v128_lnc2",
+  "entry": "nkilib.experimental.gdn.gdn_tkg.gdn_tkg",
+  "params": {
+    "bh": 24,
+    "k_dim": 128,
+    "v_dim": 128,
+    "dtype": "bfloat16",
+    "num_v_heads": 12,
+    "lnc": 2
+  },
+  "lnc": 2,
+  "target": "trn2",
+  "atol": 0.02,
+  "rtol": 0.02,
+  "compile_seconds": 1.95,
+  "golden_seconds": 0.0,
+  "inputs": [
+    {
+      "name": "q",
+      "shape": [
+        24,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/q.npy"
+    },
+    {
+      "name": "k",
+      "shape": [
+        24,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/k.npy"
+    },
+    {
+      "name": "v",
+      "shape": [
+        24,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/v.npy"
+    },
+    {
+      "name": "b",
+      "shape": [
+        24
+      ],
+      "dtype": "float32",
+      "file": "inputs/b.npy"
+    },
+    {
+      "name": "a",
+      "shape": [
+        24
+      ],
+      "dtype": "float32",
+      "file": "inputs/a.npy"
+    },
+    {
+      "name": "A_log",
+      "shape": [
+        12
+      ],
+      "dtype": "float32",
+      "file": "inputs/A_log.npy"
+    },
+    {
+      "name": "dt_bias",
+      "shape": [
+        12
+      ],
+      "dtype": "float32",
+      "file": "inputs/dt_bias.npy"
+    },
+    {
+      "name": "z",
+      "shape": [
+        24,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/z.npy"
+    },
+    {
+      "name": "norm_weight",
+      "shape": [
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/norm_weight.npy"
+    },
+    {
+      "name": "state_in",
+      "shape": [
+        24,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/state_in.npy"
+    }
+  ],
+  "scalar_args": {},
+  "outputs": [
+    {
+      "name": "output_0",
+      "shape": [
+        24,
+        128
+      ],
+      "dtype": "bfloat16",
+      "golden": "golden/output_0.npy"
+    },
+    {
+      "name": "output_1",
+      "shape": [
+        24,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_1.npy"
+    }
+  ],
+  "versions": {
+    "nki": "0.6.0+31049202112.g85070674",
+    "neuronx_cc": "CompilerVersion(major=0,minor=6)"
+  },
+  "max_abs_err_limit": 0.027,
+  "baseline_neff_sha256": "00196994b3d7fa5ef7497a05b65efbabd8d1376ebd6a8caeb2198028c159baec",
+  "baseline_neff_bytes": 251764,
+  "source_case_dir": "/home/ubuntu/workspace/gdn-bench/artifacts/gdn_tkg_bh24_k128_v128_lnc2"
+}
