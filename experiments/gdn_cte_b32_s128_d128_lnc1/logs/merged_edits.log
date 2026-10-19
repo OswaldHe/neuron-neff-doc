@@ -1,0 +1,70 @@
+4138bc96bc825bc9d993ef8087cb2acd7a0147ef
+2026-10-18 19:03:29 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_cte.gdn_cte gdn_cte_b32_s128_d128, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.0011), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+d6d348bad22e6b4bf98f909ed86889ce31bda297
+2026-10-18 20:02:07 +0000
+
+Fuse 32 SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF queued transfers (rewrite the reload descriptors' source in SP0.json and retarget each trigger's wait from the now-dead save's completion to the save's own producer wait), removing one ~2.1 us DMA hop per instance from the critical path: 1350.6 -> 1312.2 us (-2.9%), outputs bit-identical.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 1349.28 -> 1313.32 (+2.7%)
+
+========================================================================
+f8380ab0bc9022b89f012ca1d4090a5a99680bab
+2026-10-18 21:04:57 +0000
+
+Move all 160 DRAM staging round-trips onto a new queued-DMA queue (qSPSpillReload1, 16 rings on free semaphores 72-87, 192 SBUF->SBUF transfers incl. an op:"cast" fp32->bf16 composite that a 2-D DGE pattern cannot express), relay each retired DGE reload through an EVENT_SEMAPHORE that repays its +16 via the slot's extended events block, and replace all 224 now-dead ACT DGE saves with 40 ns EVENT_SEMAPHOREs: 1315.9 -> 1207.4 us (-8.2%; -10.7% vs the iter-0 baseline), outputs bit-identical over 3 runs.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 1313.32 -> 1208.03 (+8.0%)
+
+========================================================================
+a8b683bd46d187556c63b9aeda9f1c58cbd81e21
+2026-10-18 23:05:03 +0000
+
+Remove SP head-of-line blocking by moving 44 of iter-2's queued-DMA relay EVENT_SEMAPHOREs (which stalled the in-order Sync engine for 130 us total) past the already-unblocked DMA triggers queued behind them, so the dma_transpose feeding the line-597 W_t@state matmul issues ~1 us earlier: 1207.6 -> 1176.0 us (-2.6%; -12.9% vs the iter-0 baseline), a pure permutation of 44 SP0.bin slots with every semaphore total unchanged and outputs bit-identical over 3 runs.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 1204.83 -> 1176.94 (+2.3%)
+
+========================================================================
+a04258d3ef513da845f90bb7bfe5482df1e53954
+2026-10-18 23:51:01 +0000
+
+Replaced iter-2's 160 SP relay EVENT_SEMAPHOREs by retargeting the queued-DMA queue to increment the consumer semaphores S[56..71] directly (ring relabel + a 6th queue for the 32 Pool-consumed cast composites), restoring the compiler's original DMA-completion semantics and deleting 160 instructions plus 110 us of SP blocking; performance-neutral (1174.6 vs 1175.6 us, inside the +/-2-3 us noise band) because a queued transfer's semaphore only becomes visible ~1.0-1.9 us after its end_ts and the relay was hiding inside that window, and outputs are bit-identical over 3 runs.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 1176.94 -> 1172.35 (+0.4%)
+
+========================================================================
+5585a335a63c0179933629d8ff0d7198c6b7de9d
+2026-10-19 01:14:34 +0000
+
+Fused the two queued DMA hops on the W path into one for all 64 instances (Wg_grp --q2 cast--> W_all --q0 transpose--> W_t becomes Wg_grp --inserted ACT CAST--> bf16 scratch --one 4-descriptor permute+transpose--> W_t), by inserting 32 brand-new ACT CAST instructions -- device-verified here for the first time that an engine's instruction stream can be *extended*, which is what iter-4/5 lacked to attempt this -- and re-expressing the 64 dma_transpose descriptors to read the bf16 scratch; outputs bit-identical over 3 runs and 1175.3 -> 1171.8 us (-3 us, inside the +/-2-3 us noise floor, so no wall-clock claim: the hop removal is worth ~23 us and the replacement CAST hands +19.4 us back as ACT busy, which notes section 8.0 shows how to recover by moving the cast to the 80%-idle Pool engine).
+
+AutoHelix iteration 6
+
+total_exec_time_us: 1172.35 -> 1170.26 (+0.2%)
+
+========================================================================
+fb6aac90fe7d0d6654781b7e5dc8193361778207
+2026-10-19 02:23:29 +0000
+
+Deleted a ~1.4 us queued-DMA hop from the W-path's gating chain by retargeting the 32 Pool EVENT_SEMAPHORE waits off the (now dead since iter-6) q2 "cast" DMA onto that DMA's own trigger condition S[6]>=v_g, so Pool's input-load DGEs and hence the q0 ring throttles that release the W_t dma_transposes satisfy ~1.4 us earlier; also moved iter-6's 32 inserted fp32->bf16 CASTs from ACT to DVE (2x faster per element, -19.5 us of ACT busy, and ordered by same-engine program order right after the producer of their source rather than iter-6's cross-engine race, which also fixes the one cast that had no wait at all) and gave the 32 chunk-0 W_t transpose triggers a real wait on the cast's own semaphore S[88] plus an explicit PE-ordinal WAR guard in place of the ring throttle they displaced: 1170.5 -> 1165.9 us (-4.6 us; -13.7% vs the iter-0 baseline), three interleaved 5-capture medians each, outputs bit-identical over 3 runs.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 1170.26 -> 1166.26 (+0.3%)
+
+========================================================================

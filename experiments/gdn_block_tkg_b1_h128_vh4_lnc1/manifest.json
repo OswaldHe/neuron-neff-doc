@@ -1,0 +1,163 @@
+{
+  "case": "gdn_block_tkg_b1_h128_vh4",
+  "entry": "nkilib.experimental.gdn.gdn_block_tkg.gdn_block_tkg",
+  "params": {
+    "batch": 1,
+    "hidden": 128,
+    "num_k_heads": 2,
+    "num_v_heads": 4,
+    "head_dim": 128,
+    "kernel_width": 4,
+    "dtype": "bfloat16"
+  },
+  "lnc": 1,
+  "target": "trn2",
+  "atol": 0.03,
+  "rtol": 0.03,
+  "compile_seconds": 1.5,
+  "golden_seconds": 0.01,
+  "inputs": [
+    {
+      "name": "hidden",
+      "shape": [
+        1,
+        1,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/hidden.npy"
+    },
+    {
+      "name": "W_in_qkv",
+      "shape": [
+        128,
+        1024
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/W_in_qkv.npy"
+    },
+    {
+      "name": "W_in_z",
+      "shape": [
+        128,
+        512
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/W_in_z.npy"
+    },
+    {
+      "name": "W_in_a",
+      "shape": [
+        128,
+        4
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/W_in_a.npy"
+    },
+    {
+      "name": "W_in_b",
+      "shape": [
+        128,
+        4
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/W_in_b.npy"
+    },
+    {
+      "name": "conv_weight",
+      "shape": [
+        1024,
+        4
+      ],
+      "dtype": "float32",
+      "file": "inputs/conv_weight.npy"
+    },
+    {
+      "name": "conv_state",
+      "shape": [
+        1,
+        1024,
+        4
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/conv_state.npy"
+    },
+    {
+      "name": "A_log",
+      "shape": [
+        4
+      ],
+      "dtype": "float32",
+      "file": "inputs/A_log.npy"
+    },
+    {
+      "name": "dt_bias",
+      "shape": [
+        4
+      ],
+      "dtype": "float32",
+      "file": "inputs/dt_bias.npy"
+    },
+    {
+      "name": "norm_weight",
+      "shape": [
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/norm_weight.npy"
+    },
+    {
+      "name": "recurrent_state",
+      "shape": [
+        1,
+        4,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/recurrent_state.npy"
+    }
+  ],
+  "scalar_args": {},
+  "outputs": [
+    {
+      "name": "output_0",
+      "shape": [
+        1,
+        1,
+        512
+      ],
+      "dtype": "bfloat16",
+      "golden": "golden/output_0.npy"
+    },
+    {
+      "name": "output_1",
+      "shape": [
+        1,
+        1024,
+        4
+      ],
+      "dtype": "bfloat16",
+      "golden": "golden/output_1.npy"
+    },
+    {
+      "name": "output_2",
+      "shape": [
+        1,
+        4,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_2.npy"
+    }
+  ],
+  "versions": {
+    "nki": "0.6.0+31049202112.g85070674",
+    "neuronx_cc": "CompilerVersion(major=0,minor=6)"
+  },
+  "max_abs_err_limit": 0.0036000000000000003,
+  "baseline_neff_sha256": "9eca82dec745ddc741d8a21a8fec364d2ab2974a1dec4f9185af39031a860e9c",
+  "baseline_neff_bytes": 132402,
+  "source_case_dir": "/home/ubuntu/workspace/gdn-bench/artifacts/gdn_block_tkg_b1_h128_vh4"
+}

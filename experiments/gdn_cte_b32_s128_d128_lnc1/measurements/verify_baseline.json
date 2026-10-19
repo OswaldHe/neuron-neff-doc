@@ -1,0 +1,88 @@
+{
+  "case": "gdn_cte_b32_s128_d128",
+  "runs": 1,
+  "checks": [
+    {
+      "pass": true,
+      "claim": "kernel.neff is a well-formed NEFF",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "same interface and launch shape, still single-rank (see tools/launch_rules.py)",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "run 0: the device ran the NEFF",
+      "detail": "exit 0, 11.88s"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: max_abs_err <= 0.0011",
+      "detail": "max_abs_err 1.097e-04 (10% of the limit), cosine 0.999994"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: also within the upstream atol=0.05 rtol=0.05",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: max_abs_err <= 0.0011",
+      "detail": "max_abs_err 9.081e-04 (83% of the limit), cosine 0.999997"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: also within the upstream atol=0.05 rtol=0.05",
+      "detail": "within tol 100.00%"
+    }
+  ],
+  "pass": true,
+  "io_signature": {
+    "inputs": [
+      "q",
+      "k",
+      "v",
+      "beta",
+      "gate"
+    ],
+    "n_outputs": 2,
+    "num_tpb": 1,
+    "subgraphs": [
+      "sg00"
+    ],
+    "members": 34
+  },
+  "max_abs_err_limit": 0.0011,
+  "outputs": {
+    "output_0": {
+      "max_abs_err": 0.00010974425822496414,
+      "mean_abs_err": 1.953522314579459e-06,
+      "max_rel_err": 5.021356582641602,
+      "cosine": 0.9999940395355225,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_1": {
+      "max_abs_err": 0.0009080767631530762,
+      "mean_abs_err": 1.6138164937729016e-05,
+      "max_rel_err": 28.288225173950195,
+      "cosine": 0.9999968409538269,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    }
+  }
+}

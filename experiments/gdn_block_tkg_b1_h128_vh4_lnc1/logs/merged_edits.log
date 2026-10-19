@@ -1,0 +1,80 @@
+182771f318dbd4ea2aee6fa0a19a3c60bf6463f2
+2026-10-19 06:35:26 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_block_tkg.gdn_block_tkg gdn_block_tkg_b1_h128_vh4, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.0036), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+480fb81eb22f43bf6ad9eeae31fc42ea91e88f58
+2026-10-19 07:49:19 +0000
+
+Rerouted all six SBUF->DRAM->SBUF scratch round-trips (tmp-bufs 6_1, 52_47, 7_2, 111_106, 110_105, 109_104) as direct SBUF->SBUF DMAs, because each narrow DRAM write costs ~135 ns/element (~18 us per 128-element transfer) and waiting on those completions was ~127 us of the 215 us runtime: 215.2 -> 95.3 us (2.26x), arithmetic bit-identical.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 217.758 -> 95.217 (+56.3%)
+
+========================================================================
+d596d336356a038cffa4adf6e9f668084d8194d2
+2026-10-19 09:20:50 +0000
+
+Cut 29 DGE DMA instructions off the critical path (16 exact duplicates and 5 signal-only dummies left by iter-1 replaced by EVENT_SEMAPHORE + SEM_ADD_IMM_COMPLETE, 8 per-partition Activation copies replaced by in-engine CAST, and the 8-tile conv_weight load merged into one 2-D DMA), because a DGE DMA costs ~0.55 us of engine issue time regardless of size plus a 3-7 us completion-reporting hop, while a semaphore-add costs 0.03 us: 95.3 -> 83.2 us (1.15x), arithmetic bit-identical.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 95.217 -> 83.176 (+12.6%)
+
+========================================================================
+fa6ac0aa626931aa8b75e57f357d687e03bafc8e
+2026-10-19 11:00:50 +0000
+
+Cut 8.6 us (83.2 -> 74.6 us, 1.12x) by taking work off the two engines that gate the dependency chain and by deleting waits that wait for work already done: 8 weight-load DMAs moved from Pool's 19-instruction serial prologue onto Activation's 8 entirely unused DGE queues (semaphores 80-87 - which needed the discovery that inserting instruction slots into a stream works), their now-vacuous DGE queue-guard waits stripped, 10 tiny SBUF->SBUF per-partition DMAs replaced by compute CASTs on Pool (0.25 us and instant completion versus 0.55 us of issue plus a 2-5 us completion hop), the merged conv_weight load issued first on Pool because its completion is the kernel's first gate, the dt_bias/A_log input trigger hoisted to the front of SP, and the waits on seven qSPSpillReload0 triggers dropped after decoding showed their blocks are byte-identical duplicates of the SP DGE transposes or iter-1 dummies writing a dead buffer; arithmetic bit-identical over 10 runs.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 83.176 -> 74.921 (+9.9%)
+
+========================================================================
+e5fb209f88eafc50b1f3de0f4630e5da50ce6841
+2026-10-19 12:38:42 +0000
+
+Cut 14.6 us (74.6 -> 60.0 us, 1.24x) by moving six DMA transfers onto idle compute engines, deleting four of the thirteen activation-table loads, and removing three remaining SBUF->DRAM->SBUF round trips: the discovery that a compute instruction's address immediate is the full linear SBUF address with the partition encoded (DVE pc 88 already reads partition 0 and writes partition 32 at num_active_channels=1) turned the queued p0->p32 bf16->fp32 cast block into 4 Activation CASTs, the queued 4-element gather into 4 per-partition CASTs once its dataflow was traced back to two values Activation had already computed, and SP 30's 512-descriptor within-partition gather into 4 Pool CASTs; the discovery that an ACT_TABLE_LOAD whose table is already resident can be replaced by a no-op - plus the activation_func -> table map (36=silu, 29=rsqrt, 30/128/CAST/COPY=table-agnostic) - let two ACTIVATEs be moved, one of them writing in place on its own dead source, so four 1.283 us loads could be deleted and the tail's table switches went from 4,2,4,2,4,2,4 to 4,2,4. Arithmetic bit-identical throughout. The refutations matter as much: the DGE engine is a single serial resource retiring ~1536 two-byte transpose descriptors at ~15 ns each between 34 and 50 us, so three edits that merely let a transfer start earlier were correct and all lost time, and the dma_configs_dma_transpose_2d_tile bit is inert.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 74.921 -> 60.157 (+19.7%)
+
+========================================================================
+dd179c9b432be04b94e1794a648230edac5b133e
+2026-10-19 14:07:55 +0000
+
+Cut 9.0 us (60.0 -> 51.0 us, 1.18x) by converting both 512-descriptor DGE transpose groups into 128-descriptor ones and by deleting two more activation-table loads: a partition->row transpose costs 128 descriptors per column, so packing four columns into 8 contiguous bytes per partition first (compute can do that, and iter-4's Pool CASTs had already built one such gather) lets ONE 8-byte transpose replace four 2-byte ones, with the consumers reading the interleaved row at a stride of 4 - including PE's reverse-stride LDWEIGHTS, which tolerates having every stride scaled by 4 and was the reason this was thought blocked. iter-4's unexplained func-36 move failure turned out to be an aliasing bug, not an accumulator one: an fp32 [128,1] result is 512 bytes and routinely covers a 256-byte bf16 matmul operand that PE reads with no semaphore in between, so giving the op a private in-place destination makes the move bit-identical and frees two 1.283 us table loads. The epilogue's nine queued DMAs became one 1024-byte store once it turned out that trailing queue blocks can be left untriggered while skipping middle ones hangs the device. The refutations matter as much: replacing a DMA with a semaphore add can make a wait on an untouched semaphore pass early (sems 68-70 reached their 32-threshold from two event semaphores alone, which hung the run while verify.py still passed), merging these tile loads into one 2-D DMA is only correct in the last DGE slot of an engine, and a strided multi-element compute CAST does not gather what its step field says.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 60.157 -> 51.175 (+14.9%)
+
+========================================================================
+02202387109fe1eb1b58d31f885131c0952a80e7
+2026-10-19 15:33:10 +0000
+
+Cut 3.3 us (51.1 -> ~47.8 us, 1.07x) by repointing one Activation gate off a dead 2-byte dummy DMA onto the transfer it was meant to guard (-2.4 us for a single changed field: qSPSpillReload0 block 4's completion arrived 2.6 us after the merged transpose it proxied for, and iter-4/5 had failed at this twice only because the DGE was still saturated), moving eight Activation CASTs onto the idle DVE, and hoisting four silu ACTIVATEs above two barriers that exist only to gate DVE's reads; arithmetic bit-identical over 4 runs. The refutations matter as much: def.json's dma_queue key shows DGE queues are OWNED per engine with a fixed semaphore set, so a DGE DMA cannot be relocated to another engine's stream and only a single TRAILING queue can be absorbed by a merge (built on the earlier slot, not the later one, which is why iter-5's recipe could not be reproduced) - and that one legal merge regresses 1.8 us; every dtype-converting Activation op including ACTIVATE func 128 reads the active table, so it cannot cross an ACTIVATION_TABLE_LOAD even though a same-dtype CAST can; ACTIVATE func 128 can carry a memory-pointer scale so it is not a deletable copy; letting SP overlap two DGE transfers passes verify and then hangs the device; and a DGE completion report is ~2.5 us of fixed latency rather than bandwidth, so splitting the 256 KB output store buys nothing.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 51.175 -> 47.695 (+6.8%)
+
+========================================================================
+dfe4a21a1394a1ef3969c8e6db22702a592ab366
+2026-10-19 16:51:21 +0000
+
+Cut 3.5 us (47.7 -> 44.2 us, 1.08x) by collapsing the 16 prologue weight-tile DMAs into two 8-tile DGE transfers (refuting iter-6's "only a trailing queue can be merged" rule: a DGE DMA's issue cost is ~0.6 us fixed + 0.71 ns/descriptor, so 8 instructions of 128 descriptors cost 5.5 us and one of 1024 costs 1.3), then re-splitting the tbl-2 half along its consumer boundary so DVE's tiles land 1.2 us sooner, merging two SP transposes, hoisting an ACT_TABLE_LOAD inside the barrier that was stalling it, and - the second-biggest win - hoisting Pool's 8-CAST column-packing run above three DRAM spill DMAs it has no dependency on, which deleted Activation's entire 2.16 us wait on the SP transpose it feeds; arithmetic bit-identical (same error triple, 4 runs identical). Refutations: in_proj must stay the first DMA issued on Activation (issuing tbl-2 first costs 1.1 us because in_proj's completion gates PE's whole LDWEIGHTS chain); contention between in-flight DGE transfers stretches the ~2.8 us completion report to 3-5 us, which is why freeing 10 us of engine time showed up as a +0.6 regression until the SP transposes were merged too; and a merge can silently drop a dependency that was enforced only by the issuing engine's instruction order - merging SP 46+50 made the transfer read a buffer ~0.2 us before Activation wrote it while verify stayed bit-identical, and reverting that one merge was both correct and 0.45 us faster than re-gating it.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 47.695 -> 44.384 (+6.9%)
+
+========================================================================

@@ -1,0 +1,118 @@
+{
+  "case": "gdn_block_tkg_b1_h128_vh4",
+  "runs": 1,
+  "checks": [
+    {
+      "pass": true,
+      "claim": "kernel.neff is a well-formed NEFF",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "same interface and launch shape, still single-rank (see tools/launch_rules.py)",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "run 0: the device ran the NEFF",
+      "detail": "exit 0, 9.59s"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: max_abs_err <= 0.0036",
+      "detail": "max_abs_err 2.999e-03 (83% of the limit), cosine 0.999993"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: also within the upstream atol=0.03 rtol=0.03",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: max_abs_err <= 0.0036",
+      "detail": "max_abs_err 1.928e-03 (54% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: also within the upstream atol=0.03 rtol=0.03",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_2: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_2: max_abs_err <= 0.0036",
+      "detail": "max_abs_err 6.033e-04 (17% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_2: also within the upstream atol=0.03 rtol=0.03",
+      "detail": "within tol 100.00%"
+    }
+  ],
+  "pass": true,
+  "io_signature": {
+    "inputs": [
+      "hidden",
+      "W_in_qkv",
+      "W_in_z",
+      "W_in_a",
+      "W_in_b",
+      "conv_weight",
+      "conv_state",
+      "A_log",
+      "dt_bias",
+      "norm_weight",
+      "recurrent_state"
+    ],
+    "n_outputs": 3,
+    "num_tpb": 1,
+    "subgraphs": [
+      "sg00"
+    ],
+    "members": 46
+  },
+  "max_abs_err_limit": 0.0036000000000000003,
+  "outputs": {
+    "output_0": {
+      "max_abs_err": 0.002998650074005127,
+      "mean_abs_err": 0.00029297510627657175,
+      "max_rel_err": 0.3427072763442993,
+      "cosine": 0.9999925494194031,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_1": {
+      "max_abs_err": 0.0019277334213256836,
+      "mean_abs_err": 7.96080639702268e-05,
+      "max_rel_err": 0.003781795734539628,
+      "cosine": 0.9999998807907104,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_2": {
+      "max_abs_err": 0.0006032511591911316,
+      "mean_abs_err": 1.0361931344959885e-05,
+      "max_rel_err": 11.873229026794434,
+      "cosine": 1.0,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    }
+  }
+}

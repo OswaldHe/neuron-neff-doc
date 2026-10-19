@@ -1,0 +1,8 @@
+# One line per merged NEFF edit, oldest first.
+# latency = total_exec_time_us, the loop's metric (median of several device captures).
+
+iter  latency_us   vs_base   step   commit   edit
+   0    1186.642    1.000x      -   cf29f1f   (baseline NEFF as compiled)
+   1     874.474    1.357x  -26.3%   86fffa6   fused the 160 SBUF->DRAM->SBUF staging round-trips into single queued SB->SB transfers, replaced the 320 SP DGE 16x16 DMA_TRANSPOSE slots with 161 multi-tile queued transposes, and hosted the resulting relay chain on idle Pool instead of SP: 1184.6 -> 873.6 us (-26.3%, 1.36x), outputs bit-identical to the baseline
+   2     836.402    1.419x   -4.4%   aafb305   Fused the A_full->Ball->transpose two-hop queued-DMA chain into one hop: all 161 qSPSpillReload2 transpose descriptors now read A_full directly (composed access pattern, cell-set verified) and their SP triggers moved to just after the Ball copy's trigger carrying its "A_full ready" wait, removing one fixed-latency DMA hop from PE's doubling-solve path: 876.0 -> 835.6 us (-4.6%, 1.048x; 1.419x vs baseline), outputs bit-identical
+   3     835.849    1.420x   -0.1%   -------   (not merged)

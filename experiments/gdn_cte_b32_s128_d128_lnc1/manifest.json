@@ -1,0 +1,99 @@
+{
+  "case": "gdn_cte_b32_s128_d128",
+  "entry": "nkilib.experimental.gdn.gdn_cte.gdn_cte",
+  "params": {
+    "batch_size": 32,
+    "seq_len": 128,
+    "head_dim": 128,
+    "dtype": "bfloat16"
+  },
+  "lnc": 1,
+  "target": "trn2",
+  "atol": 0.05,
+  "rtol": 0.05,
+  "compile_seconds": 6.03,
+  "golden_seconds": 0.04,
+  "inputs": [
+    {
+      "name": "q",
+      "shape": [
+        32,
+        128,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/q.npy"
+    },
+    {
+      "name": "k",
+      "shape": [
+        32,
+        128,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/k.npy"
+    },
+    {
+      "name": "v",
+      "shape": [
+        32,
+        128,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/v.npy"
+    },
+    {
+      "name": "beta",
+      "shape": [
+        32,
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/beta.npy"
+    },
+    {
+      "name": "gate",
+      "shape": [
+        32,
+        128
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/gate.npy"
+    }
+  ],
+  "scalar_args": {
+    "scale": 0.08838834764831843
+  },
+  "outputs": [
+    {
+      "name": "output_0",
+      "shape": [
+        32,
+        128,
+        128
+      ],
+      "dtype": "bfloat16",
+      "golden": "golden/output_0.npy"
+    },
+    {
+      "name": "output_1",
+      "shape": [
+        32,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_1.npy"
+    }
+  ],
+  "versions": {
+    "nki": "0.6.0+31049202112.g85070674",
+    "neuronx_cc": "CompilerVersion(major=0,minor=6)"
+  },
+  "max_abs_err_limit": 0.0011,
+  "baseline_neff_sha256": "a007c71874a24813e5607518053177f72e9261663e1c90fadd55522e323bfc19",
+  "baseline_neff_bytes": 428326,
+  "source_case_dir": "/home/ubuntu/workspace/gdn-bench/artifacts/gdn_cte_b32_s128_d128"
+}

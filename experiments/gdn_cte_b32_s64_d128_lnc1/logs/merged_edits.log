@@ -1,0 +1,30 @@
+cf29f1fb9771d9b894a835a5986494fe90738729
+2026-10-19 02:24:49 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_cte.gdn_cte gdn_cte_b32_s64_d128, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.00071), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+86fffa60c9d8941d9780421954d851863c6563e3
+2026-10-19 03:46:14 +0000
+
+fused the 160 SBUF->DRAM->SBUF staging round-trips into single queued SB->SB transfers, replaced the 320 SP DGE 16x16 DMA_TRANSPOSE slots with 161 multi-tile queued transposes, and hosted the resulting relay chain on idle Pool instead of SP: 1184.6 -> 873.6 us (-26.3%, 1.36x), outputs bit-identical to the baseline
+
+AutoHelix iteration 1
+
+total_exec_time_us: 1186.64 -> 874.474 (+26.3%)
+
+========================================================================
+aafb305fb235c8cc4a44c689de5f6f7e643e6250
+2026-10-19 04:52:45 +0000
+
+Fused the A_full->Ball->transpose two-hop queued-DMA chain into one hop: all 161 qSPSpillReload2 transpose descriptors now read A_full directly (composed access pattern, cell-set verified) and their SP triggers moved to just after the Ball copy's trigger carrying its "A_full ready" wait, removing one fixed-latency DMA hop from PE's doubling-solve path: 876.0 -> 835.6 us (-4.6%, 1.048x; 1.419x vs baseline), outputs bit-identical
+
+AutoHelix iteration 2
+
+total_exec_time_us: 874.474 -> 836.402 (+4.4%)
+
+========================================================================

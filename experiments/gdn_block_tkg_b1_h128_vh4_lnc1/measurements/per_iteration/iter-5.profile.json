@@ -1,0 +1,71 @@
+{
+  "case": "gdn_block_tkg_b1_h128_vh4",
+  "params": {
+    "batch": 1,
+    "hidden": 128,
+    "num_k_heads": 2,
+    "num_v_heads": 4,
+    "head_dim": 128,
+    "kernel_width": 4,
+    "dtype": "bfloat16"
+  },
+  "neff_sha256": "063887b45f2e68ad9bb8a6ba50108a149015573a8b748843bdfeb0076675ae7c",
+  "neff_bytes": 131900,
+  "repeats": 5,
+  "num_exec": 5,
+  "total_exec_time_us": {
+    "median": 51.175,
+    "min": 50.862,
+    "max": 53.572,
+    "spread_percent": 5.294,
+    "samples": [
+      51.211,
+      50.862,
+      51.175,
+      53.572,
+      51.005
+    ]
+  },
+  "engine_busy_us": {
+    "PE / Tensor": 7.34,
+    "Activation / Scalar": 39.268,
+    "DVE / Vector": 18.668,
+    "Pool / GpSimd": 23.997,
+    "SP / Sync": 6.852,
+    "DMA": 19.898
+  },
+  "engine_busy_percent_of_exec": {
+    "PE / Tensor": 14.3,
+    "Activation / Scalar": 76.7,
+    "DVE / Vector": 36.5,
+    "Pool / GpSimd": 46.9,
+    "SP / Sync": 13.4,
+    "DMA": 38.9
+  },
+  "summary": {
+    "total_active_time": 5.9358641e-05,
+    "total_time": 6.615323e-05,
+    "neuroncore_cycle_count": 79383,
+    "hardware_flops": 790528,
+    "mfu_estimated_percent": 0.00015195151216854162,
+    "mbu_estimated_percent": 0.02016665528614189,
+    "hfu_estimated_percent": 0.00015195150845878793,
+    "hbm_read_bytes": 682784,
+    "hbm_write_bytes": 272424,
+    "dma_transfer_total_bytes": 1606,
+    "dma_transfer_count": 8,
+    "dma_queue_count": 82,
+    "spill_reload_bytes": 0,
+    "spill_save_bytes": 40,
+    "tensor_engine_instruction_count": 86,
+    "scalar_engine_instruction_count": 150,
+    "vector_engine_instruction_count": 143,
+    "gpsimd_engine_instruction_count": 99,
+    "sync_engine_instruction_count": 115,
+    "matmul_instruction_count": 28,
+    "nc_idx": 4
+  },
+  "baseline_us": 218.172,
+  "speedup_vs_baseline": 4.2633,
+  "change_percent_vs_baseline": -76.54
+}
