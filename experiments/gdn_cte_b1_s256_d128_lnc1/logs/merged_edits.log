@@ -1,0 +1,70 @@
+439dca8f9b0c668439f0909ab82cde2865078bc9
+2026-10-20 03:46:48 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_cte.gdn_cte gdn_cte_b1_s256_d128, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.00054), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+86e9bd9cbdce265c80fc598bf464cf2235dec4a1
+2026-10-20 04:49:21 +0000
+
+Fused the five SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF DMAs and moved five DGE staging saves off the locally saturated Activation engine onto the idle Pool/Sync engines: 67.525 -> 61.905 us (-8.3%), output bit-identical.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 67.635 -> 61.939 (+8.4%)
+
+========================================================================
+9d8415c991d6860db8e7dae95f184798281e2987
+2026-10-20 06:02:05 +0000
+
+Moved two var9 reload DGEs off SP, where they sat behind a trigger waiting 2.9 us for an unrelated queued transfer, onto the idle Pool engine with their guard semaphore made explicit, which also lets the next two queued transfers trigger 1.25 us earlier: 61.817 -> 60.930 us (-1.4%), output bit-identical.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 61.939 -> 61.245 (+1.1%)
+
+========================================================================
+ddb2b42c9a2be286fe2ebd616c91f1d00cd00cb4
+2026-10-20 08:44:35 +0000
+
+Edited only kernel.neff: moved the fence-critical var11 staging DGE to an earlier-issuing slot and spread the eight staging DGEs across all three DGE queues (a DGE's queue follows its semaphore, not its host engine), replaced the two 4-to-1 DMA barriers in front of queued transfer 20 and DVE[99] with per-block waits (each staging block has exactly one reader), and re-gated PE[134] on the staging DGE that feeds it instead of the queued transpose round trip -- 61.07 to 59.36 us (-2.8%), outputs bit-identical.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 61.245 -> 59.622 (+2.7%)
+
+========================================================================
+880982b249bfd2834e69e096633fe03107f25dce
+2026-10-20 09:51:58 +0000
+
+Built a backward critical-path walker over the profile and fixed the six nodes it pointed at: gave the staging DGE that gates DVE[98] its real guard (the DVE signal that writes its source, not the leftover ACT program-order wait) and issued it first on Pool, moved three DGE rows out from in front of the compute slots and Sync triggers they were delaying, split the last 4-to-1 fence and the dead S[16] one, hosted the first input load on idle Sync, and split the final output store across ACT and SP so its two rows overlap -- 59.4 to 57.6 us (-2.8%, three interleaved A/B rounds), outputs bit-identical.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 59.622 -> 57.899 (+2.9%)
+
+========================================================================
+a7d75901d267b3bc7fbbc72baa2b447149abd811
+2026-10-20 11:06:23 +0000
+
+Rebuilt the critical-path walker (now resolving queued-transfer semaphores) and took the six nodes it pointed at: rebuilt the tail so the two output stores issue as one row each on the two fast hosts (Sync and Activation) instead of three serial rows, moved the two output DGEs that were hosted on Pool -- which answers a semaphore ~500 ns slower than Sync after an idle stretch -- onto inserted Sync slots, pushed a pure 0x4780->0x4980 COPY behind the Vector op whose signal gates the whole tail, and executed two Activation TENSOR_SCALARs on the idle Vector engine instead (same instruction struct on both engines, POINTER_IMMEDIATE included), each with a bare fence left in the vacated Activation slot so the ordering is enforced by construction -- 57.7-58.0 to 55.1 us (-4.2%, three interleaved A/B rounds), outputs bit-identical.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 57.899 -> 55.107 (+4.8%)
+
+========================================================================
+b928be2033d105e12f46576c3c0cd039242a20d3
+2026-10-20 12:20:18 +0000
+
+Removed two provably dead DVE CASTs (each an exact re-execution of an earlier slot with no intervening write to its source) and executed four Activation TENSOR_SCALARs on the idle Vector engine instead -- including one that increments S[4], which iter-6's recipe had excluded, by making the vacated Activation slot an EVENT_SEMAPHORE that waits for the Vector copy and then takes its place in the S[4] count -- with each moved op's re-ordering fence placed on the engine hosting its single consumer (Sync, Pool) rather than on the Activation stream being relieved: 55.1 -> 53.25 us (-3.5%, interleaved A/B with non-overlapping ranges), outputs bit-identical.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 55.107 -> 53.247 (+3.4%)
+
+========================================================================

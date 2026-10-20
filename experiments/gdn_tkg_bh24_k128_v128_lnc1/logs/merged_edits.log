@@ -1,0 +1,80 @@
+731778c7bd988501a2530c68422a83350f69a18d
+2026-10-19 16:52:41 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_tkg.gdn_tkg gdn_tkg_bh24_k128_v128, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.028), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+86e367cc42277d863d598f8022b319724c8822c8
+2026-10-19 18:06:49 +0000
+
+Edited kernel.neff only: collapsed the 24 per-head silu / k-scale / state-scale ops into one wide ACT instruction and two DVE broadcast multiplies, cut ACT_TABLE_LOAD 46->6, dropped the 24 PSUM->SBUF copies, split the state-out DMA 8 ways and moved z ahead of v/k, taking the kernel from 153.6 to 79.6 us (1.93x) with bit-identical outputs.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 153.086 -> 79.641 (+48.0%)
+
+========================================================================
+504faee5065406f791c87e3e219e1543fcf7d20a
+2026-10-19 19:31:44 +0000
+
+Edited only kernel.neff: group-merged the 24 pre-outer S_bf casts, split the 3.35 us k_f*=k_scale DVE op 8 ways and moved 7 chunks out of the head into DVE's body idle gaps, and fused 16 of the 24 per-head ACTIVATE f128 scale-multiplies with the fp32->bf16 CAST that reads them (ACT writes bf16 directly), taking the kernel from 79.6 to 74.5 us (1.07x) with bit-identical outputs.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 79.641 -> 74.615 (+6.3%)
+
+========================================================================
+e8d4527e20155c17c3db5a15605f3abaa6ecb323
+2026-10-19 20:35:52 +0000
+
+Edited only kernel.neff: split the 3.36 us DVE S*=exp_g into 4 chunks of 6 heads and the 1.5 MB state_in DGE input in two, then hoisted the 3 body-resident wide S->S_bf casts into the 3.1 us ACT idle window the head now opens, taking the kernel from 74.4 to 72.7 us with bit-identical outputs.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 74.615 -> 72.684 (+2.6%)
+
+========================================================================
+66f6259aee6494ebbed9883483add242be693104
+2026-10-19 22:03:02 +0000
+
+Edited only kernel.neff: deleted three artificial fences on the per-head pipeline (PE's outer-product gate now points at the f128 that wrote its operand, the DVE RMSNorm output ops wait on their own producer instead of a later ACT barrier, and 7 ACT f29 ops moved ahead of the f128 blocking them), moved the body activation-table load into a 0.62 us ACT idle, permuted the ACT head so the recip-sqrt table loads while ACT waits on the s24 DMA, and folded norm_weight into silu(z) once in a free DVE window so 22 of the 24 per-head output multiplies collapse into the op before them -- 72.60 to 69.03 us (1.05x) with bit-identical outputs.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 72.684 -> 69.156 (+4.9%)
+
+========================================================================
+b17922f20a1d333be8f80feaf5fbf061e16690b2
+2026-10-19 23:35:19 +0000
+
+Edited only kernel.neff: folded the per-head "w = beta*delta" scale-multiply out of the Activation queue into the DVE delta op for 12 of 24 heads (the op now emits -w and the matching "S += outer" became "S -= outer", which is exact in floating point, with v pre-scaled by beta), merged 3 pairs of the per-head rsqrt ACTIVATE into single contiguous ops and fused the last 2 fp32 scale-multiplies with the CAST that reads them -- 69.03 to 66.41 us (1.039x) with bit-identical outputs.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 69.156 -> 66.278 (+4.2%)
+
+========================================================================
+8d63265348e8b929deb121a11dc1979d9e99f3be
+2026-10-20 00:53:49 +0000
+
+Edited only kernel.neff: moved 21 of the 24 per-head S->S_bf fp32->bf16 CASTs off the Activation engine (the DVE "S -= outer" op now writes the bf16 copy directly and an update-free clone still writes fp32 S for state_out), added 34 free PE EVENT_SEMAPHORE fences on the o PSUM banks, and finished iter-5's edit W on 7 more per-head "w = beta*delta" ACTIVATEs by re-deriving the pairing from the delta op instead of the PE gate -- 66.28 to 62.55 us (1.060x) with bit-identical outputs.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 66.278 -> 62.546 (+5.6%)
+
+========================================================================
+62c95b605c1524dd78c5af07bccb9a52826dcf52
+2026-10-20 02:38:06 +0000
+
+Edited only kernel.neff: deleted the 18 do-nothing DVE and 14 update-free Activation EVENT_SEMAPHORE slots (each costs ~90 ns of queue time on the body's critical cycle), moved the 6 fp32 "S" clone ops behind the next head's bf16 S_bf write so that head's o matmul starts ~285 ns earlier, and folded head 20's "w = beta*delta" scale-multiply into its DVE delta op -- 62.55 to 60.95 us (1.026x), outputs unchanged at 83% of the error limit and bit-identical across 28 device runs.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 62.546 -> 60.941 (+2.6%)
+
+========================================================================
