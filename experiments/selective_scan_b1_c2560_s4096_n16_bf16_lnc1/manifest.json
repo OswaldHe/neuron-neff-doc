@@ -1,0 +1,110 @@
+{
+  "case": "selective_scan_b1_c2560_s4096_n16_bf16",
+  "entry": "nkilib.experimental.scan.selective_scan",
+  "wrapper": null,
+  "params": {
+    "batch": 1,
+    "channels": 2560,
+    "seq_len": 4096,
+    "state_size": 16,
+    "use_D": true,
+    "use_initial_state": false,
+    "dtype": "bfloat16"
+  },
+  "lnc": 1,
+  "target": "trn2",
+  "atol": 0.1,
+  "rtol": 0.05,
+  "compile_seconds": 23.55,
+  "golden_seconds": 8.43,
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        2560,
+        4096
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/x.npy"
+    },
+    {
+      "name": "dt",
+      "shape": [
+        1,
+        2560,
+        4096
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/dt.npy"
+    },
+    {
+      "name": "A",
+      "shape": [
+        2560,
+        16
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/A.npy"
+    },
+    {
+      "name": "B",
+      "shape": [
+        1,
+        16,
+        4096
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/B.npy"
+    },
+    {
+      "name": "C",
+      "shape": [
+        1,
+        16,
+        4096
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/C.npy"
+    },
+    {
+      "name": "D",
+      "shape": [
+        2560
+      ],
+      "dtype": "bfloat16",
+      "file": "inputs/D.npy"
+    }
+  ],
+  "scalar_args": {},
+  "outputs": [
+    {
+      "name": "output_0",
+      "shape": [
+        1,
+        2560,
+        4096
+      ],
+      "dtype": "bfloat16",
+      "golden": "golden/output_0.npy"
+    },
+    {
+      "name": "output_1",
+      "shape": [
+        1,
+        2560,
+        16
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_1.npy"
+    }
+  ],
+  "versions": {
+    "nki": "0.6.0+31049202112.g85070674",
+    "neuronx_cc": "CompilerVersion(major=0,minor=6)"
+  },
+  "max_abs_err_limit": 0.15,
+  "baseline_neff_sha256": "a2e4cbbb65b3d8cfee3b438fe0eafd6964895753b301049eb9704153c8d06b8c",
+  "baseline_neff_bytes": 1435582,
+  "source_case_dir": "/home/ubuntu/workspace/gdn-bench/artifacts/selective_scan_b1_c2560_s4096_n16_bf16"
+}

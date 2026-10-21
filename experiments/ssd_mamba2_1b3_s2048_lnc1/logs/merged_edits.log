@@ -1,0 +1,80 @@
+aeb1536a9bdb9363fe36bc47d28e02e40a992ad9
+2026-10-20 23:11:00 +0000
+
+Baseline: nkilib nkilib.experimental.scan.ssd ssd_mamba2_1b3_s2048, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 6.2e-07), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+ef6b76e2c637d722dff45733c5df9c282eb4dd8d
+2026-10-21 00:40:57 +0000
+
+Rewrote 1020 of 1024 ACT reciprocal(exp(x)) units as exp(-x) fed by one scaled PSUM->SBUF copy, which let 2040 of 2046 activation-table reloads and 1020 now-dead slots be deleted: 7154.9 -> 5130 us (-28.3%).
+
+AutoHelix iteration 1
+
+total_exec_time_us: 7154.5 -> 5129 (+28.3%)
+
+========================================================================
+038289dec4f4785b5ab9b66ba8c3511b2185832c
+2026-10-21 01:48:08 +0000
+
+Merged 303 adjacent pairs of identical-configuration ACT ACTIVATEs into single double-length instructions (ACT 14377 -> 14074 slots, ACT busy 3769 -> 3672 us); the headline finding is that ACT busy time no longer converts to wall time (-97 us ACT -> -1.6 us wall), so notes redirect iter-3 at the 1.7 ms of semaphore-handoff latency instead.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 5129 -> 5126.66 (+0.0%)
+
+========================================================================
+5b5d3e5591e32257f64f164adf6c2f1f7f9d1dec
+2026-10-21 03:05:27 +0000
+
+Replace the redundant second per-unit exp_cs_last broadcast (4 DVE STREAM_SHUFFLEs) with one 128-partition DVE COPY from the first broadcast at 545 of 1024 sites: bit-identical output, DVE busy 2701 -> 2440 us, 5126.3 -> 5105.3 us (-0.42%).
+
+AutoHelix iteration 3
+
+total_exec_time_us: 5126.66 -> 5106.76 (+0.4%)
+
+========================================================================
+73236bae0967095815eaaebb4b1ca4499b5f52d5
+2026-10-21 04:11:18 +0000
+
+Deleted the 1920 redundant per-chunk state_sb HBM round-trip DMAs by pinning state_sb to a fixed per-head SBUF address (free hole at 0x0ec00) and replacing each dead DGE trigger in place with an EVENT_SEMAPHORE carrying SEM_ADD_IMM_COMPLETE(+16) so no wait threshold moves: bit-identical output, 5107.0 -> 4856.3 us (-4.91%).
+
+AutoHelix iteration 4
+
+total_exec_time_us: 5106.76 -> 4855.99 (+4.9%)
+
+========================================================================
+86c8a419d3cd5117faac9e73496a14735c90360a
+2026-10-21 05:26:10 +0000
+
+Deleted 984 of the 1020 ACT cs_col PSUM->SBUF copies by pointing their two exp consumers straight at the PSUM word (bit-exact, since the copy's scale is exactly 1.0) and rotating each 3-slot group so the EVENT_SEMAPHORE placeholder lands last and carries a sem4>=V0 handshake, which both keeps every semaphore threshold valid and delays PE's PSUM-bank reclaim until after both reads: bit-identical output, 4855.9 -> 4777.2 us (-1.62%).
+
+AutoHelix iteration 5
+
+total_exec_time_us: 4855.99 -> 4777.85 (+1.6%)
+
+========================================================================
+c7383fe7de5f048edeaf5ab99e8de4b205809af0
+2026-10-21 06:34:48 +0000
+
+Three bit-exact edits, all driven by the same new facts -- a 2-group 3-D access pattern works on ACTIVATE, and a dead instruction should be SHRUNK (keeping its compute-completion increment) rather than replaced by an EVENT_SEMAPHORE: (1) merged the two per-unit `*= exp_cs_col` multiplies into one ACTIVATE at the later of the two slots, 708 sites; (2) rewrote the 1040 dead `Y_off = 0; Y_off += psum` pairs as a plain PSUM->SBUF COPY and shrank each now-redundant MEMSET to its minimal 1-element form; (3) repointed the `state_sb *= exp_cs_last_N` / `decay_factor` consumer of the redundant second exp_cs_last broadcast at the first broadcast's buffer and retired 1194 now-dead STREAM_SHUFFLEs at 384 statically-fenced sites. No semaphore threshold moves in any of the three: bit-identical output, 4777.0 -> 4683.0 us (-1.97%).
+
+AutoHelix iteration 6
+
+total_exec_time_us: 4777.85 -> 4683.08 (+2.0%)
+
+========================================================================
+383e6ac4c77b2d3797fb0e6c07ca130af30d2693
+2026-10-21 07:30:26 +0000
+
+Turned off the configured-but-unused `imm` pointer operand on all 6157 pointer-scale ACT ACTIVATEs (imm_src POINTER_IMMEDIATE -> INSTRUCTION_IMMEDIATE; imm_imm_ptr was 0 and activation_func 128 never reads it, so the fetch cost 91 ns per instruction for nothing) and deleted 6404 provably-dead slots (3327 no-op/subsumed EVENT_SEMAPHOREs across all engines, 3077 LOAD_MASK_SELECTs whose mask no STREAM_SHUFFLE reads): bit-identical output, 4682.7 -> 4251.2 us (-9.21%).
+
+AutoHelix iteration 7
+
+total_exec_time_us: 4683.08 -> 4250.97 (+9.2%)
+
+========================================================================

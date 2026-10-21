@@ -1,0 +1,80 @@
+3c0582d0763bc0dd3efe80a22479dab79b77f613
+2026-10-20 12:22:02 +0000
+
+Baseline: nkilib nkilib.experimental.gdn.gdn_cte.gdn_cte gdn_cte_b1_s128_d128, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.00035), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+f8f9f898cc74fd3d6df2bed6bb65e2e71880fcf2
+2026-10-20 13:22:15 +0000
+
+Fused all five SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF transfers, moved the gate-load and output-store DGEs off Pool onto idle SP, and hoisted two queued-transfer triggers above fences they do not depend on: 48.52 -> 43.50 us (-10.3%), output bit-identical.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 48.699 -> 43.427 (+10.8%)
+
+========================================================================
+ac545cab825fa9db0daa3dd9b259a5608862f225
+2026-10-20 14:50:50 +0000
+
+Five cross-engine scheduling edits, no arithmetic touched: three Activation TENSOR_SCALARs now execute on the idle DVE engine (EVENT_SEMAPHORE stand-ins keep the S[4] count byte-identical, fences placed on the consumers' engines); the var8-reload trigger is hoisted out from behind a DGE descriptor row on Sync; three var11/var12 staging DGE rows are re-hosted from Activation onto idle Sync after the blk14 trigger; Pool's composite S[14] fence is split by giving blk17 its own S[44] guard; and a late WAR guard is rotated behind the two casts it was stalling: 43.4 -> 40.9 us (-5.7%), output bit-identical.
+
+AutoHelix iteration 2
+
+total_exec_time_us: 43.427 -> 41.056 (+5.5%)
+
+========================================================================
+e833bbc5f418ad61e2100ce4e10a856d4baa307b
+2026-10-20 16:24:14 +0000
+
+Four cross-engine scheduling edits, no arithmetic touched: the sem-43 DGE row moves off Activation onto idle Pool (unblocking the ACT->S[4]#32 chain and opening a 0.73 us Activation hole), the sem-45 DGE row moves off Sync into that hole (making the blk15/blk16 queued triggers gate-bound and landing S[45] 1.2 us earlier), and two Vector CASTs (DVE[49] and DVE[60]) now execute on the idle Scalar engine with EVENT_SEMAPHORE stand-ins preserving Vector program order: 41.0 -> 40.25 us (-1.8%), output bit-identical.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 41.056 -> 40.094 (+2.3%)
+
+========================================================================
+e6372de8b4d47382707f8c676df12346829698fc
+2026-10-20 17:54:38 +0000
+
+Six cross-engine scheduling edits, no arithmetic touched: the sem-17 output-store DGE row now reads its true producer's buffer (0x4710, gated S[6]>=66) instead of waiting on an identity x1.0 copy; three reorders pull the serial blk18->blk19->output-store DMA train forward (ACT[70]/ACT[71] swapped so blk18's trigger is no longer behind a 259 ns op, the wait-less Vector MEMSET hoisted over the TENSOR_TENSOR in front of it, and the wait-less/update-less ACT filler rotated out of the chain), each trading the renumbered S[4]/S[6] threshold between its two waiters; and the last two wait-less Vector CASTs now execute on the idle Scalar engine with update-less EVENT_SEMAPHORE stand-ins preserving Vector program order: 40.21 -> 38.33 us (-4.7%), max_abs_err identical to the baseline.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 40.094 -> 38.417 (+4.2%)
+
+========================================================================
+6d77c442d6458d4fb3471ce4d9a91350b3362ae2
+2026-10-20 19:21:22 +0000
+
+Four cross-engine scheduling edits on the blk20 branch of the tail, no arithmetic touched: ACT[76]/ACT[77] swapped so the ACTIVATE producing S[4]#37 is not parked 0.26 us behind an update-less TENSOR_SCALAR, DVE[96]/DVE[97] swapped so the TENSOR_TENSOR feeding ACT[78] is not behind a 223 ns CAST (S[6]#63/#64 trade, ACT[78] and PE[142] re-pointed), the 258 ns ACT[79] TENSOR_SCALAR moved onto the idle Vector engine behind a wait-less S[4] stand-in so ACT[80] starts the moment blk20 lands instead of waiting on the blk19 branch, and blk20's trigger re-pointed S[4]>=38 -> >=39 because a wait-less update-only EVENT_SEMAPHORE on Activation increments ahead of the compute op in front of it and had taken over #38: exit fence S[17] 38.93 -> 38.71, metric 38.281 -> 38.138 us (-0.37%, 12 of 12 interleaved pairs), max_abs_err identical to the baseline and 3/3 runs bit-identical.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 38.417 -> 38.17 (+0.6%)
+
+========================================================================
+2106d0b9221a93e952f2065a88d1bd07400c10b0
+2026-10-20 21:01:08 +0000
+
+Three scheduling edits in the tail, no arithmetic touched: the update-less ACT TENSOR_SCALAR (dst p0+0xe000, 1.2 us of slack) rotated behind the SOFTPLUS + stand-in pair so the SOFTPLUS runs at its gate and blk20's trigger fires 0.047 us earlier; the PE fence ES and the LDWEIGHTS behind it swap waits so the LDWEIGHTS carries blk19's S[27]>=32 directly (blk19 branch -0.063, widening the diamond margin to 0.16 us); and the sem-16 output-store DGE row moved off Pool (fixed +0.42 us Pool DGE issue latency) onto idle Activation. 38.142 -> 38.113 us on medians of 11 7-capture runs each (38.153 -> 38.084 on the order-balanced ABBA subset, matching the 0.06 the landmarks predict) -- a 0.1-0.2% effect against a 0.6 us single-run spread, so the landmark deltas are the primary evidence. max_abs_err identical to the baseline, 3/3 runs bit-identical. Also established and recorded in notes/iter-6.md: the metric's window ends at the last output-store DMA packet (so the ~1.8 us epilogue barrier is outside it), the tail's remaining 5.1 us is 2.6 us of fixed DMA latency plus a two-branch diamond balanced to 0.16 us with only 0.08 us of schedulable slack, and five further candidates (DGE sem_increment, moving the Vector CAST to Activation or to Pool, rotating the wait-less Vector TT, the Q1/Q2 store-channel contention theory) were refuted on the device.
+
+AutoHelix iteration 6
+
+total_exec_time_us: 38.17 -> 38.224 (-0.1%)
+
+========================================================================
+a344adbd5171b3d0a088deeb37fc049b40dc77da
+2026-10-20 22:25:27 +0000
+
+Both tail output stores moved off their DGE rows onto new "type": "in" DMA queues added to def.json (the existing spill/reload data queue rejects IO variables at load time: "Var 7 could not be found ... is not an IO variable"), replacing each store's 667 ns descriptor row + 650 ns to its first packet with a 65 ns Sync trigger + 750 ns, with the 64 kB output_1 store alone on its queue so it keeps the fast 24 ns/packet dispatch and a 4-byte warm-up transfer in front of it: 38.07 -> 37.54 us (-0.5 us, -1.3%; three order-balanced ABBA blocks give -0.458, -0.474 and -0.094, and 14 7-capture runs separate cleanly), max_abs_err identical to the baseline, 3/3 runs bit-identical. Refuted on the device and recorded in notes/iter-7.md: splitting the store over two rings of one queue (+0.2) or over two queues (+0.3) -- the ~0.75 us descriptor fetch is serialized across queues, so adding tail transfers costs time rather than saving it.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 38.17 -> 37.635 (+1.4%)
+
+========================================================================
