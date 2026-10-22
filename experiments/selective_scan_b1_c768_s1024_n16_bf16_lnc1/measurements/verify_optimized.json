@@ -1,0 +1,89 @@
+{
+  "case": "selective_scan_b1_c768_s1024_n16_bf16",
+  "runs": 1,
+  "checks": [
+    {
+      "pass": true,
+      "claim": "kernel.neff is a well-formed NEFF",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "same interface and launch shape, still single-rank (see tools/launch_rules.py)",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "run 0: the device ran the NEFF",
+      "detail": "exit 0, 10.04s"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: max_abs_err <= 0.075",
+      "detail": "max_abs_err 6.245e-02 (83% of the limit), cosine 0.999998"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: also within the upstream atol=0.05 rtol=0.05",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: max_abs_err <= 0.075",
+      "detail": "max_abs_err 4.268e-05 (0% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: also within the upstream atol=0.05 rtol=0.05",
+      "detail": "within tol 100.00%"
+    }
+  ],
+  "pass": true,
+  "io_signature": {
+    "inputs": [
+      "x",
+      "dt",
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "n_outputs": 2,
+    "num_tpb": 1,
+    "subgraphs": [
+      "sg00"
+    ],
+    "members": 34
+  },
+  "max_abs_err_limit": 0.075,
+  "outputs": {
+    "output_0": {
+      "max_abs_err": 0.062450408935546875,
+      "mean_abs_err": 0.002914268523454666,
+      "max_rel_err": 0.7549857497215271,
+      "cosine": 0.9999980926513672,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_1": {
+      "max_abs_err": 4.267692565917969e-05,
+      "mean_abs_err": 4.694614119671314e-07,
+      "max_rel_err": 0.008023343048989773,
+      "cosine": 0.9999999403953552,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    }
+  }
+}

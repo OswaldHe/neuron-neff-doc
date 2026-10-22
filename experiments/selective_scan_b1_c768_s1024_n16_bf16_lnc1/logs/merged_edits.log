@@ -1,0 +1,60 @@
+fa356dda74b12dcb204215ce46115c2b9df94960
+2026-10-20 23:06:44 +0000
+
+Baseline: nkilib nkilib.experimental.scan.selective_scan selective_scan_b1_c768_s1024_n16_bf16, verifier and profiler
+
+LNC=1, one rank. The loop edits kernel.neff only; tools/verify.py checks it
+on the device against a torch golden (max_abs_err <= 0.075), tools/launch_rules.py
+keeps the launch shape, tools/profile.py reports total_exec_time.
+
+========================================================================
+6e7af1757a00671b2979f2e30e543d24ca233dee
+2026-10-22 01:01:38 +0000
+
+Move the 170 free y+=Cs fp32 TENSOR_TENSOR ADDs off the saturated DVE engine onto the 17%-idle Pool engine, merge the Pool carry COPYs pairwise, and place each Pool->DVE hand-off wait as late as legal (on original EVENT_SEMAPHORE slots' unused extended wait, plus a fresh ES before the 12 group-boundary deadlines): 602.7 -> 516.5 us (1.167x), output bit-identical.
+
+AutoHelix iteration 1
+
+total_exec_time_us: 602.718 -> 516.791 (+14.3%)
+
+========================================================================
+5e1f9805e1e0d856143d109d96d35546c59fe247
+2026-10-22 02:56:15 +0000
+
+Collapse the 12 per-group 512-element y-accumulator MEMSETs into one shared SBUF zero buffer (each group's first y+=Cs writer now reads the zero buffer as src0) and strip the 170 now-redundant S6 self-waits off the ex-ADD EVENT_SEMAPHORE slots, deleting the 159 that become pure no-ops: 516.5 -> 510.7 us (1.012x, 1.180x cumulative), output bit-identical.
+
+AutoHelix iteration 3
+
+total_exec_time_us: 516.791 -> 510.633 (+1.2%)
+
+========================================================================
+af2c8b30e0c47e7a43a1672ad59e7cfd406c6cd8
+2026-10-22 03:37:08 +0000
+
+Rewrite the 12 zero-buffer "first y writer" TENSOR_TENSOR ADDs as 2-stream COPYs (y = Cs instead of y = 0 + Cs) and shrink the now-unread 512-element zero MEMSET to 1 element: a DVE 512-elem fp32 COPY is 416 ns vs 677 ns for a 3-stream TENSOR_TENSOR, so 510.6 -> 508.8 us (1.003x, 1.184x cumulative), output bit-identical.
+
+AutoHelix iteration 4
+
+total_exec_time_us: 510.633 -> 508.77 (+0.4%)
+
+========================================================================
+7358c9d3e7ad450b8ae41449e163d627ff7ccae2
+2026-10-22 04:41:51 +0000
+
+Retarget the 10 Cs MULTs that feed each group's first y write straight into y (dropping the now-dead COPYs), then de-alias three compiler SBUF overlaps so the DVE barriers guarding them can go: move the output_1 carry array off the 0x4000 dBx buffer, move group 0's first state tile off the y buffer being DMA'd out, and hoist ACT's 1.28 us ACTIVATION_TABLE_LOAD (which has no address operands) above the DMA barrier it sat behind plus the three dA writers stuck behind the next one: 508.7 -> 501.3/501.5 us (1.014x, 1.202x cumulative), output bit-identical.
+
+AutoHelix iteration 5
+
+total_exec_time_us: 508.77 -> 501.414 (+1.4%)
+
+========================================================================
+74fb4cf998badf6728dcdd6ac18a468f57e0ecf5
+2026-10-22 06:36:25 +0000
+
+Measured that only DVE TENSOR_TENSORs with all three operands in SBUF lose bandwidth to Pool's 512-element ADDs (681 ns clean, up to 2061 ns taxed), then moved the 7 reachable ones a few slots later past PSUM-operand MULTs into each group's Pool-idle window (re-pointing only the waits on their exact S6 ordinal), and retired the last two 512-element Pool "y = Cs" COPYs by writing their producers straight into y: 501.3 -> 497.8/498.0 us (1.007x, 1.211x cumulative), output bit-identical.
+
+AutoHelix iteration 7
+
+total_exec_time_us: 501.414 -> 497.88 (+0.7%)
+
+========================================================================
