@@ -1,0 +1,117 @@
+{
+  "case": "ssd_mamba2_370m_s2048",
+  "entry": "nkilib.experimental.scan.ssd",
+  "wrapper": null,
+  "params": {
+    "batch": 1,
+    "nheads": 48,
+    "seqlen": 2048,
+    "headdim": 32,
+    "dstate": 64,
+    "chunk_size": 128,
+    "use_D": false,
+    "use_initial_state": false,
+    "dtype": "float32"
+  },
+  "lnc": 1,
+  "target": "trn2",
+  "atol": 0.2,
+  "rtol": 0.05,
+  "compile_seconds": 27.1,
+  "golden_seconds": 0.07,
+  "inputs": [
+    {
+      "name": "x",
+      "shape": [
+        1,
+        48,
+        2048,
+        32
+      ],
+      "dtype": "float32",
+      "file": "inputs/x.npy"
+    },
+    {
+      "name": "dt",
+      "shape": [
+        1,
+        48,
+        2048
+      ],
+      "dtype": "float32",
+      "file": "inputs/dt.npy"
+    },
+    {
+      "name": "A",
+      "shape": [
+        48
+      ],
+      "dtype": "float32",
+      "file": "inputs/A.npy"
+    },
+    {
+      "name": "B",
+      "shape": [
+        1,
+        2048,
+        64
+      ],
+      "dtype": "float32",
+      "file": "inputs/B.npy"
+    },
+    {
+      "name": "C",
+      "shape": [
+        1,
+        2048,
+        64
+      ],
+      "dtype": "float32",
+      "file": "inputs/C.npy"
+    },
+    {
+      "name": "causal_mask",
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "file": "inputs/causal_mask.npy"
+    }
+  ],
+  "scalar_args": {
+    "chunk_size": 128.0
+  },
+  "outputs": [
+    {
+      "name": "output_0",
+      "shape": [
+        1,
+        48,
+        2048,
+        32
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_0.npy"
+    },
+    {
+      "name": "output_1",
+      "shape": [
+        1,
+        48,
+        64,
+        32
+      ],
+      "dtype": "float32",
+      "golden": "golden/output_1.npy"
+    }
+  ],
+  "versions": {
+    "nki": "0.6.0+31049202112.g85070674",
+    "neuronx_cc": "CompilerVersion(major=0,minor=6)"
+  },
+  "max_abs_err_limit": 2.3e-07,
+  "baseline_neff_sha256": "94aa278350a0992cdaeafd8e881087b495239cb1bbdeeaf0118a203c9f15f66d",
+  "baseline_neff_bytes": 1234294,
+  "source_case_dir": "/home/ubuntu/workspace/gdn-bench/artifacts/ssd_mamba2_370m_s2048"
+}

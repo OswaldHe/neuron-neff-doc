@@ -1,0 +1,89 @@
+{
+  "case": "ssd_mamba2_370m_s2048",
+  "runs": 1,
+  "checks": [
+    {
+      "pass": true,
+      "claim": "kernel.neff is a well-formed NEFF",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "same interface and launch shape, still single-rank (see tools/launch_rules.py)",
+      "detail": ""
+    },
+    {
+      "pass": true,
+      "claim": "run 0: the device ran the NEFF",
+      "detail": "exit 0, 10.34s"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: max_abs_err <= 2.3e-07",
+      "detail": "max_abs_err 1.881e-07 (82% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_0: also within the upstream atol=0.2 rtol=0.05",
+      "detail": "within tol 100.00%"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: finite",
+      "detail": "0 NaN or Inf"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: max_abs_err <= 2.3e-07",
+      "detail": "max_abs_err 1.192e-07 (52% of the limit), cosine 1.000000"
+    },
+    {
+      "pass": true,
+      "claim": "output_1: also within the upstream atol=0.2 rtol=0.05",
+      "detail": "within tol 100.00%"
+    }
+  ],
+  "pass": true,
+  "io_signature": {
+    "inputs": [
+      "x",
+      "dt",
+      "A",
+      "B",
+      "C",
+      "causal_mask"
+    ],
+    "n_outputs": 2,
+    "num_tpb": 1,
+    "subgraphs": [
+      "sg00"
+    ],
+    "members": 37
+  },
+  "max_abs_err_limit": 2.3e-07,
+  "outputs": {
+    "output_0": {
+      "max_abs_err": 1.8812716007232666e-07,
+      "mean_abs_err": 7.276327540495231e-09,
+      "max_rel_err": 0.06612390279769897,
+      "cosine": 0.9999998807907104,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    },
+    "output_1": {
+      "max_abs_err": 1.1920928955078125e-07,
+      "mean_abs_err": 1.0378067294425364e-08,
+      "max_rel_err": 0.02564849890768528,
+      "cosine": 1.0,
+      "within_tol_fraction": 1.0,
+      "allclose": true,
+      "nan_or_inf": 0
+    }
+  }
+}
