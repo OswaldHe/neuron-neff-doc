@@ -1,8 +1,8 @@
-# One line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0    5248.466    1.000x      -   f8b3e31   (baseline NEFF as compiled)
+   0    5248.466    1.000x      -   -------   (baseline NEFF as compiled)
    1    3624.206    1.448x  -30.9%   200d241   ACT-only edits: turned off the unused pointer `imm` operand on all 6144 ACT ACTIVATEs (bit-exact, -8.3%) and rewrote 633 of 768 recip(exp(cs)) units as exp(-cs) fed by a scratch-SBUF copy, which deletes 1266 of the 1531 1283 ns activation-table reloads (-24.7%); 5248.9 -> 3622.2 us (1.449x).
    2    3290.283    1.595x   -9.2%   1ed7001   ACT-only + PE-wait edits: both exps of each unit now read the cs PSUM word directly (deleting iter-1's 621 scratch copies and 621 barriers, and converting 119 more recip(exp) units to exp(-x) so 238 more 1283 ns table reloads go away), made legal by raising the PE PSUM-refill guard instead of moving ACT's semaphore increment; 3622.6 -> 3289.6 us (-9.19%), max_abs_err unchanged on the binding output.
    3    3106.025    1.690x   -5.6%   1db4928   Rebuilt the state_sb spill path: 605 of 816 (head,chunk) bounces now move SBUF->SBUF in one SP transfer with the ACT trigger replaced by an EVENT_SEMAPHORE doing SEM_ADD_IMM +16 (the remaining 211 stage through a new resident per-head SBUF buffer instead of the HBM tmp), plus the last 8 recip(exp) units rewritten as exp(-cs) so 10 more 1283 ns table reloads became no-ops; 3291.3 -> 3106.0 us (-5.63%), max_abs_err unchanged on both outputs.

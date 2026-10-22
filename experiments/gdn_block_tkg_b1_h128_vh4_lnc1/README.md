@@ -48,8 +48,8 @@ each one.
 ```
 baseline.neff / optimized.neff   the two NEFFs; diff them with
                                  /home/ubuntu/workspace/neff_doc/tools/neff_diff.py
-nki/gdn_block_tkg.py             original kernel source
-nki/gdn_block_tkg_torch.py       original kernel source
+nki/gdn_block_tkg.py             the kernel source as compiled
+nki/gdn_block_tkg_torch.py       torch reference, used for the golden
 manifest.json                    IO names, shapes, dtypes, tolerances, max_abs_err_limit
 tools/verify.py                  the constraint: run the NEFF on the device, compare to golden
 tools/launch_rules.py            the constraint that kept the launch shape (subgraph count,

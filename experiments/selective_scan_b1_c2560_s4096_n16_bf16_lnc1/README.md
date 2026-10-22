@@ -38,9 +38,9 @@ each one.
    2    6818.831    1.161x   -1.0%   e7f3a7a   Move the last 351 y_accum+=Cs fp32 TENSOR_TENSOR ADDs that increment S[6] from the saturated DVE engine
    3    6712.060    1.180x   -1.6%   fa7f641   Merge 973 of the 1-element Pool carry COPYs pairwise into dim-1 strided copies (-300 us of Pool time) a
    4    6604.127    1.199x   -1.6%   51c6a8e   Stop the 98.8%-busy DVE engine blocking on waits it does not need yet: delete the 154 y_accum MEMSETs (
-   5    6604.441    1.199x   +0.0%   -------   (not merged)
-   6    6603.581    1.199x   -0.0%   -------   (not merged)
-   7    6603.962    1.199x   +0.0%   -------   (not merged)
+   5    6604.441    1.199x   +0.0%   -------   (no change to kernel.neff in this iteration)
+   6    6603.581    1.199x   -0.0%   -------   (no change to kernel.neff in this iteration)
+   7    6603.962    1.199x   +0.0%   -------   (no change to kernel.neff in this iteration)
 ```
 
 ## Contents

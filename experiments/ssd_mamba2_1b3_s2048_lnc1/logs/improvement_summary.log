@@ -1,8 +1,8 @@
-# One line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0    7154.503    1.000x      -   aeb1536   (baseline NEFF as compiled)
+   0    7154.503    1.000x      -   -------   (baseline NEFF as compiled)
    1    5129.004    1.395x  -28.3%   ef6b76e   Rewrote 1020 of 1024 ACT reciprocal(exp(x)) units as exp(-x) fed by one scaled PSUM->SBUF copy, which let 2040 of 2046 activation-table reloads and 1020 now-dead slots be deleted: 7154.9 -> 5130 us (-28.3%).
    2    5126.665    1.396x   -0.0%   038289d   Merged 303 adjacent pairs of identical-configuration ACT ACTIVATEs into single double-length instructions (ACT 14377 -> 14074 slots, ACT busy 3769 -> 3672 us); the headline finding is that ACT busy time no longer converts to wall time (-97 us ACT -> -1.6 us wall), so notes redirect iter-3 at the 1.7 ms of semaphore-handoff latency instead.
    3    5106.762    1.401x   -0.4%   5b5d3e5   Replace the redundant second per-unit exp_cs_last broadcast (4 DVE STREAM_SHUFFLEs) with one 128-partition DVE COPY from the first broadcast at 545 of 1024 sites: bit-identical output, DVE busy 2701 -> 2440 us, 5126.3 -> 5105.3 us (-0.42%).

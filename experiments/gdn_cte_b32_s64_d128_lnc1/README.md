@@ -36,7 +36,7 @@ each one.
 ```
    1     874.474    1.357x  -26.3%   86fffa6   fused the 160 SBUF->DRAM->SBUF staging round-trips into single queued SB->SB transfers, replaced the 32
    2     836.402    1.419x   -4.4%   aafb305   Fused the A_full->Ball->transpose two-hop queued-DMA chain into one hop: all 161 qSPSpillReload2 transp
-   3     835.849    1.420x   -0.1%   -------   (not merged)
+   3     835.849    1.420x   -0.1%   -------   (no change to kernel.neff in this iteration)
 ```
 
 ## Contents
@@ -44,8 +44,8 @@ each one.
 ```
 baseline.neff / optimized.neff   the two NEFFs; diff them with
                                  /home/ubuntu/workspace/neff_doc/tools/neff_diff.py
-nki/gdn_cte.py                   original kernel source
-nki/gdn_cte_torch.py             original kernel source
+nki/gdn_cte.py                   the kernel source as compiled
+nki/gdn_cte_torch.py             torch reference, used for the golden
 manifest.json                    IO names, shapes, dtypes, tolerances, max_abs_err_limit
 tools/verify.py                  the constraint: run the NEFF on the device, compare to golden
 tools/launch_rules.py            the constraint that kept the launch shape (subgraph count,

@@ -1,8 +1,8 @@
-# One line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0      48.699    1.000x      -   3c0582d   (baseline NEFF as compiled)
+   0      48.699    1.000x      -   -------   (baseline NEFF as compiled)
    1      43.427    1.121x  -10.8%   f8f9f89   Fused all five SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF transfers, moved the gate-load and output-store DGEs off Pool onto idle SP, and hoisted two queued-transfer triggers above fences they do not depend on: 48.52 -> 43.50 us (-10.3%), output bit-identical.
    2      41.056    1.186x   -5.5%   ac545ca   Five cross-engine scheduling edits, no arithmetic touched: three Activation TENSOR_SCALARs now execute on the idle DVE engine (EVENT_SEMAPHORE stand-ins keep the S[4] count byte-identical, fences placed on the consumers' engines); the var8-reload trigger is hoisted out from behind a DGE descriptor row on Sync; three var11/var12 staging DGE rows are re-hosted from Activation onto idle Sync after the blk14 trigger; Pool's composite S[14] fence is split by giving blk17 its own S[44] guard; and a late WAR guard is rotated behind the two casts it was stalling: 43.4 -> 40.9 us (-5.7%), output bit-identical.
    3      40.094    1.215x   -2.3%   e833bbc   Four cross-engine scheduling edits, no arithmetic touched: the sem-43 DGE row moves off Activation onto idle Pool (unblocking the ACT->S[4]#32 chain and opening a 0.73 us Activation hole), the sem-45 DGE row moves off Sync into that hole (making the blk15/blk16 queued triggers gate-bound and landing S[45] 1.2 us earlier), and two Vector CASTs (DVE[49] and DVE[60]) now execute on the idle Scalar engine with EVENT_SEMAPHORE stand-ins preserving Vector program order: 41.0 -> 40.25 us (-1.8%), output bit-identical.

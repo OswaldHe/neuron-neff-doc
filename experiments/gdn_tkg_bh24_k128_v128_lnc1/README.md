@@ -48,7 +48,7 @@ each one.
 ```
 baseline.neff / optimized.neff   the two NEFFs; diff them with
                                  /home/ubuntu/workspace/neff_doc/tools/neff_diff.py
-nki/gdn_tkg.py                   original kernel source
+nki/gdn_tkg.py                   the kernel source as compiled
 manifest.json                    IO names, shapes, dtypes, tolerances, max_abs_err_limit
 tools/verify.py                  the constraint: run the NEFF on the device, compare to golden
 tools/launch_rules.py            the constraint that kept the launch shape (subgraph count,

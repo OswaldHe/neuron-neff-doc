@@ -58,12 +58,13 @@ Generated references (from the vendor data and the corpus):
 5. **Experiments on the device** (`artifacts/experiments/`): header probes, a field edit with an
    exactly predicted output (e01), eleven runtime-rule cases (r01-r11), a self-wait test (o01),
    and a full edit/run/verify pass on the 7.8 MB 00-Attention-B NEFF (a01, chapter 13.6).
-6. **Optimization case studies** ([`experiments/`](experiments/)): two nkilib GDN kernels made
+6. **Optimization case studies** ([`experiments/`](experiments/)): twelve nkilib kernels made
    faster by editing only the compiled NEFF, each verified on the device every iteration —
-   `gdn_cte` prefill 14779 -> 14022 us (1.05x) and `gdn_tkg` decode 76.0 -> 36.2 us (2.10x).
-   Each folder holds both NEFFs, the NKI source, the verifier and profiler, and the
-   per-iteration findings, including the levers that were refuted and the measurement that
-   closed each one.
+   five GDN kernels plus the Mamba-style `selective_scan` and `ssd`. Gains run from 1.05x
+   (`gdn_cte` at batch 32 x seq 2304, a dependency-bound kernel whose levers are all measured
+   and closed) to 4.92x (`gdn_block_tkg`, 218 -> 44 us). 79 iterations, none rejected. Each
+   folder holds both NEFFs, the NKI source, the verifier and profiler, and the per-iteration
+   findings, including the levers that were refuted and the measurement that closed each one.
 
 ## Directory layout
 

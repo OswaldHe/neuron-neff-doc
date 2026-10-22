@@ -36,11 +36,11 @@ each one.
 ```
    1      61.939    1.092x   -8.4%   86e9bd9   Fused the five SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF DMAs and moved five DGE stag
    2      61.245    1.104x   -1.1%   9d8415c   Moved two var9 reload DGEs off SP, where they sat behind a trigger waiting 2.9 us for an unrelated queu
-   3      61.350    1.102x   +0.2%   ddb2b42   Edited only kernel.neff: moved the fence-critical var11 staging DGE to an earlier-issuing slot and spre
-   4      59.622    1.134x   -2.8%   880982b   Built a backward critical-path walker over the profile and fixed the six nodes it pointed at: gave the 
-   5      57.899    1.168x   -2.9%   a7d7590   Rebuilt the critical-path walker (now resolving queued-transfer semaphores) and took the six nodes it p
-   6      55.107    1.227x   -4.8%   b928be2   Removed two provably dead DVE CASTs (each an exact re-execution of an earlier slot with no intervening 
-   7      53.247    1.270x   -3.4%   -------   (not merged)
+   3      61.350    1.102x   +0.2%   -------   (no change to kernel.neff in this iteration)
+   4      59.622    1.134x   -2.8%   ddb2b42   Edited only kernel.neff: moved the fence-critical var11 staging DGE to an earlier-issuing slot and spre
+   5      57.899    1.168x   -2.9%   880982b   Built a backward critical-path walker over the profile and fixed the six nodes it pointed at: gave the 
+   6      55.107    1.227x   -4.8%   a7d7590   Rebuilt the critical-path walker (now resolving queued-transfer semaphores) and took the six nodes it p
+   7      53.247    1.270x   -3.4%   b928be2   Removed two provably dead DVE CASTs (each an exact re-execution of an earlier slot with no intervening 
 ```
 
 ## Contents
@@ -48,8 +48,8 @@ each one.
 ```
 baseline.neff / optimized.neff   the two NEFFs; diff them with
                                  /home/ubuntu/workspace/neff_doc/tools/neff_diff.py
-nki/gdn_cte.py                   original kernel source
-nki/gdn_cte_torch.py             original kernel source
+nki/gdn_cte.py                   the kernel source as compiled
+nki/gdn_cte_torch.py             torch reference, used for the golden
 manifest.json                    IO names, shapes, dtypes, tolerances, max_abs_err_limit
 tools/verify.py                  the constraint: run the NEFF on the device, compare to golden
 tools/launch_rules.py            the constraint that kept the launch shape (subgraph count,

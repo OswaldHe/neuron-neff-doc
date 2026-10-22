@@ -35,12 +35,12 @@ each one.
 
 ```
    1     516.791    1.166x  -14.3%   6e7af17   Move the 170 free y+=Cs fp32 TENSOR_TENSOR ADDs off the saturated DVE engine onto the 17%-idle Pool eng
-   2     516.796    1.166x   +0.0%   5e1f980   Collapse the 12 per-group 512-element y-accumulator MEMSETs into one shared SBUF zero buffer (each grou
-   3     510.633    1.180x   -1.2%   af2c8b3   Rewrite the 12 zero-buffer "first y writer" TENSOR_TENSOR ADDs as 2-stream COPYs (y = Cs instead of y =
-   4     508.770    1.185x   -0.4%   7358c9d   Retarget the 10 Cs MULTs that feed each group's first y write straight into y (dropping the now-dead CO
-   5     501.414    1.202x   -1.4%   74fb4cf   Measured that only DVE TENSOR_TENSORs with all three operands in SBUF lose bandwidth to Pool's 512-elem
-   6     501.436    1.202x   +0.0%   -------   (not merged)
-   7     497.880    1.211x   -0.7%   -------   (not merged)
+   2     516.796    1.166x   +0.0%   -------   (no change to kernel.neff in this iteration)
+   3     510.633    1.180x   -1.2%   5e1f980   Collapse the 12 per-group 512-element y-accumulator MEMSETs into one shared SBUF zero buffer (each grou
+   4     508.770    1.185x   -0.4%   af2c8b3   Rewrite the 12 zero-buffer "first y writer" TENSOR_TENSOR ADDs as 2-stream COPYs (y = Cs instead of y =
+   5     501.414    1.202x   -1.4%   7358c9d   Retarget the 10 Cs MULTs that feed each group's first y write straight into y (dropping the now-dead CO
+   6     501.436    1.202x   +0.0%   -------   (no change to kernel.neff in this iteration)
+   7     497.880    1.211x   -0.7%   74fb4cf   Measured that only DVE TENSOR_TENSORs with all three operands in SBUF lose bandwidth to Pool's 512-elem
 ```
 
 ## Contents

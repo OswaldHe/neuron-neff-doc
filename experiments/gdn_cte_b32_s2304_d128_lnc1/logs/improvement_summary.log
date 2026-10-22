@@ -1,8 +1,8 @@
-# gdn_cte_b32_s2304_d128_lnc1: one line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0   14783.312    1.000x      -   72bf8c6   (baseline NEFF as compiled)
+   0   14783.312    1.000x      -   -------   (baseline NEFF as compiled)
    1   14760.853    1.002x   -0.2%   15aaef4   Move all 2784 DGE (PSEUDO_DMA_DIRECT2D) slots off the Activation stream onto Pool/SP via an S[72] handshake, cutting Activation busy time 14.9% (14785.5 -> ~14765 us, bit-exact outputs); the measured latency gain is small because the kernel is dependency-bound on the queued spill-reload DMA, not on Activation occupancy.
    2   14505.815    1.019x   -1.7%   d8d0cf8   Restore iter-1's 1392 Pool-hosted DGE slots to Activation (Pool0.bin back to baseline, S[72] renumbered 1..1392) and keep the other 1392 on SP: Pool is the worst DGE host (slowest queue start latency and its in-order stream carries the spill chain that gates PE), so the Activation+SP split beats both all-Activation (14779) and Pool+SP (14771) at 14501 us, -1.88%, bit-exact.
    3   14381.433    1.028x   -0.9%   065c8ca   Stage the 640 DGE-only "spill" buffers in free SBUF instead of DRAM (they are reshapes, not spills: save and reload touch different SBUF regions), and let 1832 reloads read the original SBUF tile directly -- 242 MB less DRAM traffic and shorter save->reload completion chains: 14502 -> 14381 us (-0.83%), bit-exact, address-only DGE edits.

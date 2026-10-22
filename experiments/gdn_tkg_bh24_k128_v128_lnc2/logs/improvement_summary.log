@@ -1,8 +1,8 @@
-# gdn_tkg_bh24_k128_v128_lnc2: one line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0      76.042    1.000x      -   ce43cdc   (baseline NEFF as compiled)
+   0      76.042    1.000x      -   -------   (baseline NEFF as compiled)
    1      55.601    1.368x  -26.9%   df60817   Rescheduled the Activation stream: hoisted all 12 silu activations into one wide ACTIVATE on private SBUF buffers and re-ordered the head, cutting ACT_TABLE_LOAD from 22 to 6 per core (76.0 -> 55.6 us, -27%, arithmetic unchanged).
    2      44.612    1.705x  -19.8%   400b689   Moved all 36 scale-pointer ACTIVATEs off the saturated ACT engine onto idle DVE as TENSOR_TENSORs with a zero-stride broadcast src1 (two groups collapsing to a single 1536-element instruction) and merged the 12 S->S_bf casts into one wide cast over private contiguous tiles: 55.6 -> 45.0 us (-19%), arithmetic bit-identical.
    3      40.740    1.867x   -8.7%   119bfcf   Deleted the 12 ACT PSUM->SBUF `o_sb` COPYs (both readers now read out_p straight from PSUM, bit-exact, all 8 PSUM WAR constraints already implied by the existing happens-before graph), made `z` the first input DMA descriptor instead of the eighth, moved the 12 line-300 S_bf casts from ACT to DVE, and re-ordered the ACT head so DVE stops idling 6.4 us on its first real instruction: 44.8 -> 40.5 us (-9.5%), arithmetic bit-identical.

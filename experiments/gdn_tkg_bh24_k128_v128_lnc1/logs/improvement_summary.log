@@ -1,8 +1,8 @@
-# One line per merged NEFF edit, oldest first.
+# One line per iteration, oldest first.
 # latency = total_exec_time_us, the loop's metric (median of several device captures).
 
 iter  latency_us   vs_base   step   commit   edit
-   0     153.086    1.000x      -   731778c   (baseline NEFF as compiled)
+   0     153.086    1.000x      -   -------   (baseline NEFF as compiled)
    1      79.641    1.922x  -48.0%   86e367c   Edited kernel.neff only: collapsed the 24 per-head silu / k-scale / state-scale ops into one wide ACT instruction and two DVE broadcast multiplies, cut ACT_TABLE_LOAD 46->6, dropped the 24 PSUM->SBUF copies, split the state-out DMA 8 ways and moved z ahead of v/k, taking the kernel from 153.6 to 79.6 us (1.93x) with bit-identical outputs.
    2      74.615    2.052x   -6.3%   504faee   Edited only kernel.neff: group-merged the 24 pre-outer S_bf casts, split the 3.35 us k_f*=k_scale DVE op 8 ways and moved 7 chunks out of the head into DVE's body idle gaps, and fused 16 of the 24 per-head ACTIVATE f128 scale-multiplies with the fp32->bf16 CAST that reads them (ACT writes bf16 directly), taking the kernel from 79.6 to 74.5 us (1.07x) with bit-identical outputs.
    3      72.684    2.106x   -2.6%   e8d4527   Edited only kernel.neff: split the 3.36 us DVE S*=exp_g into 4 chunks of 6 heads and the 1.5 MB state_in DGE input in two, then hoisted the 3 body-resident wide S->S_bf casts into the 3.1 us ACT idle window the head now opens, taking the kernel from 74.4 to 72.7 us with bit-identical outputs.

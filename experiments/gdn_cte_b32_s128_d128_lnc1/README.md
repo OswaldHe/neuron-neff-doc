@@ -36,11 +36,11 @@ each one.
 ```
    1    1313.320    1.027x   -2.7%   d6d348b   Fuse 32 SBUF->DRAM->SBUF staging round-trips into direct SBUF->SBUF queued transfers (rewrite the reloa
    2    1208.034    1.117x   -8.0%   f8380ab   Move all 160 DRAM staging round-trips onto a new queued-DMA queue (qSPSpillReload1, 16 rings on free se
-   3    1204.834    1.120x   -0.3%   a8b683b   Remove SP head-of-line blocking by moving 44 of iter-2's queued-DMA relay EVENT_SEMAPHOREs (which stall
-   4    1176.936    1.146x   -2.3%   a04258d   Replaced iter-2's 160 SP relay EVENT_SEMAPHOREs by retargeting the queued-DMA queue to increment the co
-   5    1172.353    1.151x   -0.4%   5585a33   Fused the two queued DMA hops on the W path into one for all 64 instances (Wg_grp --q2 cast--> W_all --
-   6    1170.257    1.153x   -0.2%   fb6aac9   Deleted a ~1.4 us queued-DMA hop from the W-path's gating chain by retargeting the 32 Pool EVENT_SEMAPH
-   7    1166.256    1.157x   -0.3%   -------   (not merged)
+   3    1204.834    1.120x   -0.3%   -------   (no change to kernel.neff in this iteration)
+   4    1176.936    1.146x   -2.3%   a8b683b   Remove SP head-of-line blocking by moving 44 of iter-2's queued-DMA relay EVENT_SEMAPHOREs (which stall
+   5    1172.353    1.151x   -0.4%   a04258d   Replaced iter-2's 160 SP relay EVENT_SEMAPHOREs by retargeting the queued-DMA queue to increment the co
+   6    1170.257    1.153x   -0.2%   5585a33   Fused the two queued DMA hops on the W path into one for all 64 instances (Wg_grp --q2 cast--> W_all --
+   7    1166.256    1.157x   -0.3%   fb6aac9   Deleted a ~1.4 us queued-DMA hop from the W-path's gating chain by retargeting the 32 Pool EVENT_SEMAPH
 ```
 
 ## Contents
@@ -48,8 +48,8 @@ each one.
 ```
 baseline.neff / optimized.neff   the two NEFFs; diff them with
                                  /home/ubuntu/workspace/neff_doc/tools/neff_diff.py
-nki/gdn_cte.py                   original kernel source
-nki/gdn_cte_torch.py             original kernel source
+nki/gdn_cte.py                   the kernel source as compiled
+nki/gdn_cte_torch.py             torch reference, used for the golden
 manifest.json                    IO names, shapes, dtypes, tolerances, max_abs_err_limit
 tools/verify.py                  the constraint: run the NEFF on the device, compare to golden
 tools/launch_rules.py            the constraint that kept the launch shape (subgraph count,
