@@ -1,0 +1,13 @@
+config,kernel,family,base_us,opt_us,gain,iters
+gdn_block_tkg b1 h128 vh4,gdn_block_tkg,gdn,218.2,44.4,4.92,7
+gdn_tkg bh24 k128 v128 (LNC=1),gdn_tkg,gdn,153.5,60.9,2.52,7
+gdn_tkg bh24 k128 v128 (LNC=2),gdn_tkg,gdn,76.1,36.2,2.10,7
+ssd mamba2-370m s2048,ssd,scan,5248.9,2905.2,1.81,7
+ssd mamba2-1.3b s2048,ssd,scan,7154.9,4251.0,1.68,7
+gdn_cte b32 s64 d128,gdn_cte,gdn,1185.0,835.8,1.42,3
+gdn_cte b1 s128 d128,gdn_cte,gdn,48.5,37.6,1.29,7
+gdn_cte b1 s256 d128,gdn_cte,gdn,67.5,53.2,1.27,7
+selective_scan c768 s1024,selective_scan,scan,602.6,497.9,1.21,7
+selective_scan c2560 s4096,selective_scan,scan,7920.0,6604.0,1.20,7
+gdn_cte b32 s128 d128,gdn_cte,gdn,1351.4,1166.3,1.16,7
+gdn_cte b32 s2304 d128,gdn_cte,gdn,14779.0,14022.0,1.05,6

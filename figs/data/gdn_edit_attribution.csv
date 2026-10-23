@@ -1,0 +1,35 @@
+iter,edit,delta_us,category,what
+1,A-I,122.10,nki,six SBUF->DRAM->SBUF hand-offs rerouted as SBUF->SBUF (NKI: only by un-composing the three kernels)
+2,A+B,8.56,nki,29 duplicate/dummy DMAs left by step 1 replaced by EVENT_SEMAPHORE + SEM_ADD_IMM (an NKI rewrite would never emit them)
+2,C,0.84,nki,8 per-partition DMAs -> compute CAST
+2,E,2.70,nki,8 conv_weight tile loads merged into one 2-D DGE DMA
+3,e1+e2,3.60,indirect,8 weight-load DMAs moved from Pool onto Activation's 8 unused DGE queues (NKI picks the engine; not the queue or the position)
+3,e3+e4,0.90,nki,two more SBUF->SBUF DMAs -> Pool CASTs; one trigger hoisted
+3,e5,0.40,indirect,first-gate DMA issued first on Pool
+3,e8,1.40,neff,compiler queue-guard waits dropped on the moved DMAs
+3,e10+e11,2.10,neff,waits on 7 queued-DMA triggers whose transfers are dead or duplicated dropped
+4,f1,0.56,neff,4 duplicate queued blocks turned into 2-byte dummies (SP0.json)
+4,f3b,1.77,nki,queued 4-element gather -> 4 compute CASTs
+4,f4,0.28,neff,2 dead DGE DMAs -> semaphore adds
+4,f5,2.86,nki,queued p0->p32 cast block -> 4 cross-partition compute CASTs
+4,f6,1.57,indirect,two live DGE casts hoisted inside the SP stream
+4,f8,1.53,nki,512-descriptor within-partition gather -> 4 Pool CASTs
+4,f10,1.26,neff,one wait carrying four guarantees split; late guarantee pushed to its only consumer
+4,g2,0.30,nki,last two scratch DRAM round trips made direct
+4,g3,1.57,indirect,2 ACT_TABLE_LOADs deleted after moving one ACTIVATE
+4,g4,1.71,indirect,2 more ACT_TABLE_LOADs deleted (private in-place destination)
+4,g5,1.19,nki,output epilogue's DRAM round trip made direct
+5,k1,0.69,nki,four output stores merged into one descriptor
+5,h2,2.88,indirect,two private destinations + three silu ACTIVATEs moved; 2 ACT_TABLE_LOADs deleted
+5,k3,0.97,nki,epilogue reduced to one store (trailing queue blocks left untriggered)
+5,k4,0.23,neff,10 dead dummy queued blocks no longer triggered
+5,n2,1.40,nki,transpose group 2: pack 4 columns by compute then one 128-descriptor DMA (512 -> 128)
+5,n4,2.84,nki,transpose group 1: same packing (PE LDWEIGHTS strides scaled x4) + its gate
+6,p1,2.37,neff,one byte: an Activation gate re-pointed from a dummy DMA to the transfer it stands for
+6,p2,0.30,nki,8 Activation CASTs moved to DVE
+6,p5,0.60,neff,4 silu ACTIVATEs hoisted above two compiler barriers that only gate DVE
+7,p1,-0.62,nki,8 in_proj tile loads -> one 1024-descriptor DMA; 8 tbl-2 tiles -> another (regression until the next binder moved)
+7,p2+p6,1.66,nki,SP transposes 34+36 merged (46+50 merge reverted: it dropped a program-order dependency)
+7,p3,0.42,neff,T0 ACT_TABLE_LOAD hoisted above the barrier in front of it
+7,p9,1.56,indirect,Pool's 8-CAST packing run hoisted above three DRAM spill DMAs it does not depend on
+7,p10,0.47,nki,merged tbl-2 load split along its consumer boundary
