@@ -29,7 +29,7 @@ def save(fig, name):
 def gdn_kernel():
     fig, ax = canvas(12, 3.9, 120)
     y = 18
-    st = [(1, "in_proj\n4 matmul groups\n(PE)", "hidden x W_qkv, W_z,\nW_a, W_b", BLUE),
+    st = [(1, "in_proj\n4 matmul groups\n(Tensor Engine)", "hidden x W_qkv, W_z,\nW_a, W_b", BLUE),
           (27, "conv1d decode\nwindow 4 + silu", "nested kernel\ngdn_conv1d_decode", VIOLET),
           (53, "split + GQA\nrepeat q, k, v, z", "per-v-head\nrow copies", BLUE),
           (79, "gdn_tkg\nrecurrence", "nested kernel: l2norm, gates,\n128x128 state update,\nRMSNormGated", VIOLET)]
@@ -83,7 +83,7 @@ def step1():
           "descriptors).\nEvery semaphore and wait stays as the compiler emitted it, so the change "
           "cannot break synchronisation. 6 buffers, outputs bit-identical.", size=8.3,
           color=INK2, va="top")
-    save(fig, "fig11b_step1_roundtrip.png")
+    save(fig, "fig12b_step1_roundtrip.png")
 
 
 def step2():
@@ -92,7 +92,7 @@ def step2():
     label(ax, 1, 31.5, "A DMA whose bytes are already moved by someone else, replaced by a "
           "semaphore increment", size=10, weight="bold", color=INK)
     box(ax, 1, 13, 50, 12, "", fc=LIGHT_ORANGE, ec=ORANGE)
-    label(ax, 3, 22.3, "before: PSEUDO_DMA_DIRECT2D  (SP slot 13)", size=8.6, weight="bold",
+    label(ax, 3, 22.3, "before: PSEUDO_DMA_DIRECT2D  (Sync Engine slot 13)", size=8.6, weight="bold",
           color=INK, family="DejaVu Sans Mono")
     label(ax, 3, 18.8, "wait S[72] >= 16      semaphore=62  +16 on completion", size=8,
           family="DejaVu Sans Mono")
@@ -109,19 +109,19 @@ def step2():
           "the ISA enum but the compiler never emits it;\nthe compiled kernels only use '+1 on "
           "completion' (mode 19). Trap: wait threshold and add amount share one 4-byte value field.",
           size=8.2, color=INK2, va="top")
-    save(fig, "fig12b_step2_sem_add.png")
+    save(fig, "fig13b_step2_sem_add.png")
 
 
 def step3():
     fig, axes = plt.subplots(2, 1, figsize=(10.5, 3.6), sharex=True)
-    rows = [("Scalar", "ACT"), ("GpSimd", "Pool"), ("Sync", "SP")]
-    draw_timeline(axes[0], 2, 36, "Before (iteration 2): Pool issues 25 weight-load DGE DMAs back to "
-                  "back while ACT waits", rows=rows, dma=False)
-    draw_timeline(axes[1], 3, 36, "After (iteration 3): 8 of them issued from ACT's 8 unused DGE "
-                  "queues; Pool keeps a cheap relay", rows=rows, dma=False)
+    rows = [("Scalar", "Scalar Engine"), ("GpSimd", "GPSIMD Engine"), ("Sync", "Sync Engine")]
+    draw_timeline(axes[0], 2, 36, "Before (iteration 2): the GPSIMD Engine issues 25 weight-load DGE DMAs "
+                  "back to back while the Scalar Engine waits", rows=rows, dma=False)
+    draw_timeline(axes[1], 3, 36, "After (iteration 3): 8 of them issued from the Scalar Engine's 8 unused "
+                  "DGE queues; the GPSIMD Engine keeps a cheap relay", rows=rows, dma=False)
     axes[1].set_xlabel("time since the kernel's first instruction (µs)")
     legend(fig, -0.1, classes=[c for c in __import__("fig_data").CLASSES[:4]])
-    save(fig, "fig13_step3_queues.png")
+    save(fig, "fig14_step3_queues.png")
 
 
 def step4():
@@ -155,7 +155,7 @@ def step4():
     label(ax, 1, 2.5, "Illustrative sequence (not slot-exact). Tail loads went 4,2,4,2,4,2,4 -> 4,2,4; "
           "kernel total 13 -> 7. No set holds both silu and rsqrt, so 5 loads is the floor.",
           size=8, color=INK2)
-    save(fig, "fig14_step4_tables.png")
+    save(fig, "fig15_step4_tables.png")
 
 
 def step5():
@@ -191,20 +191,21 @@ def step5():
     for k in range(24):
         c = (BLUE, VIOLET, GREEN, ORANGE)[k % 4]
         box(ax, 94 + k * 1.05, 32, 0.9, 2.6, "", fc=c, ec=c, radius=0.1)
-    label(ax, 94, 29.5, "one interleaved row; consumers read\nwith stride 4 (incl. PE's reverse-"
+    label(ax, 94, 29.5, "one interleaved row; consumers read\nwith stride 4 (incl. the Tensor Engine's reverse-"
           "stride\nLDWEIGHTS: every step x4)", size=7.5, color=INK2, va="top")
     label(ax, 1, 16, "Applied to both transpose groups: -1.4 µs and -2.8 µs. The DMA engine retires "
           "~1,500 tiny transpose descriptors serially (~8-15 ns each),\nso in that window only "
           "removing descriptors helped - three edits that merely started transfers earlier were "
           "correct and lost time.", size=8.2, color=INK2, va="top")
-    save(fig, "fig15_step5_pack.png")
+    save(fig, "fig16_step5_pack.png")
 
 
 def step6():
     fig, ax = plt.subplots(figsize=(10.5, 3.0))
-    ev = [("SP 18: DGE transpose (the real data)", 35.80, 36.41, BLUE, 3, (35.80, 3.38, "bottom")),
+    ev = [("Sync Engine slot 18: DGE transpose (the real data)", 35.80, 36.41, BLUE, 3, (35.80, 3.38, "bottom")),
           ("S[67] += 16: its completion", 37.80, 37.80, BLUE, 3, (37.95, 3.0, "center")),
-          ("SP 31: trigger of a 2-byte dummy DMA", 39.00, 39.10, MUTED, 2, (37.3, 2.38, "bottom")),
+          ("Sync Engine slot 31: trigger of a 2-byte dummy DMA", 39.00, 39.10, MUTED, 2,
+           (36.6, 2.38, "bottom")),
           ("S[28] += 16: dummy completes", 40.39, 40.39, MUTED, 2, (40.55, 2.0, "center"))]
     for name, s, e, c, y, (tx, ty, va) in ev:
         if e > s + 0.05:
@@ -214,19 +215,19 @@ def step6():
         ax.text(tx, ty, name, fontsize=8, color=INK2, va=va)
     ax.broken_barh([(37.85, 0.5)], (0.7, 0.6), facecolors=GREEN)
     ax.broken_barh([(40.44, 0.5)], (0.7, 0.6), facecolors=ORANGE)
-    ax.text(38.45, 1.0, "ACT 55 starts\n(after the edit)", fontsize=8, color=GREEN, va="center")
-    ax.text(41.05, 1.0, "ACT 55 starts\n(compiled gate)", fontsize=8, color=ORANGE, va="center")
+    ax.text(38.45, 1.0, "Scalar Engine slot 55\nstarts (after the edit)", fontsize=8, color=GREEN, va="center")
+    ax.text(41.05, 1.0, "Scalar Engine slot 55\nstarts (compiled gate)", fontsize=8, color=ORANGE, va="center")
     ax.annotate("", xy=(37.85, 1.45), xytext=(40.44, 1.45),
                 arrowprops=dict(arrowstyle="<->", color=INK, lw=1))
     ax.text(39.15, 1.6, "2.6 µs", ha="center", fontsize=8.5, color=INK, weight="bold")
-    ax.set_yticks([3, 2, 1], ["SP / DMA", "dummy", "ACT"])
+    ax.set_yticks([3, 2, 1], ["Sync Engine / DMA", "dummy", "Scalar Engine"])
     ax.set_ylim(0.3, 3.9)
     ax.set_xlim(35.4, 43.2)
     ax.set_xlabel("time (µs), iteration-5 profile")
     ax.tick_params(axis="y", length=0)
     ax.spines["left"].set_visible(False)
-    ax.set_title("One byte: Activation slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'", fontsize=10)
-    save(fig, "fig16_step6_gate.png")
+    ax.set_title("One byte: Scalar Engine slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'", fontsize=10)
+    save(fig, "fig17_step6_gate.png")
 
 
 def step7():
@@ -246,7 +247,7 @@ def step7():
     ax.set_xlabel("engine time to issue (µs), cost model fitted on the profiles")
     ax.set_title("Merging tile loads buys issue time; then split again along the consumer boundary "
                  "(4 + 4 tiles)", fontsize=10)
-    save(fig, "fig17_step7_merge.png")
+    save(fig, "fig18_step7_merge.png")
 
 
 def attribution():
@@ -293,7 +294,7 @@ def attribution():
     a1.set_title("Steps 2-7 by lever type: 22.5 of 51 µs needed a non-NKI lever", fontsize=10)
     fig.legend(handles=[Patch(facecolor=c, label=l) for l, c in CAT.values()], loc="lower center",
                ncol=3, bbox_to_anchor=(0.5, -0.06), fontsize=8.3)
-    save(fig, "fig19_attribution.png")
+    save(fig, "fig22_attribution.png")
     return {k: (round(tot1[k], 1), round(tot2[k], 1)) for k in CAT}
 
 

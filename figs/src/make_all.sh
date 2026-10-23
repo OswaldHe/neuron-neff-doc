@@ -22,4 +22,5 @@ cd "$HERE"
 "$PY_PLOT" fig_background.py
 "$PY_PLOT" fig_data.py
 "$PY_PLOT" fig_steps.py
+"$PY_PLOT" fig_profile_frames.py   # needs the neuron-explorer screenshots in figs/
 rm -rf "$WORK"

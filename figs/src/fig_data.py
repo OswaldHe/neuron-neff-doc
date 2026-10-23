@@ -12,7 +12,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data")
 OUT = os.path.join(HERE, "..")
 
-ROWS = [("Tensor", "PE"), ("Vector", "DVE"), ("Scalar", "ACT"), ("GpSimd", "Pool"), ("Sync", "SP")]
+ROWS = [("Tensor", "Tensor Engine"), ("Vector", "Vector Engine"), ("Scalar", "Scalar Engine"),
+        ("GpSimd", "GPSIMD Engine"), ("Sync", "Sync Engine")]
 DMA_OPS = {"DMA_DIRECT2D", "WRITE"}
 SYNC_OPS = {"EVENT_SEMAPHORE", "NOP", "DRAIN", "SET_ORDERING_MODE"}
 CLASSES = [("compute", BLUE, "compute instruction"), ("dma", ORANGE, "DMA issue (DGE / trigger)"),
@@ -89,7 +90,7 @@ def timeline_pair():
                 weight="bold")
     axes[1].set_xlabel("time since the kernel's first instruction (µs); one profiled execution")
     legend(fig, -0.05)
-    save(fig, "fig10_gdn_timeline.png")
+    save(fig, "fig11_gdn_timeline.png")
 
 
 def timelines_all():
@@ -97,16 +98,16 @@ def timelines_all():
     fig, axes = plt.subplots(8, 1, figsize=(10.5, 9.6), sharex=True)
     for it, ax in enumerate(axes):
         e = draw_timeline(ax, it, 228, h=0.8)
-        ax.set_yticks([5, 0], ["PE", "DMA"])
+        ax.set_yticks([5, 0], ["Tensor", "DMA"])
         ax.axvline(e, color=INK2, lw=0.8, ls=(0, (2, 2)))
         ax.text(e + 1.5, 2.5, f"{L[f'iter{it}']['median_us']:.1f} µs", fontsize=8.5, color=INK,
                 va="center", weight="bold")
         ax.set_title(f"iter {it}: {STEP_LABEL[it].split('  ', 1)[-1]}", fontsize=9, loc="left",
                      pad=2, weight="normal", color=INK2)
-    axes[-1].set_xlabel("time (µs)   rows top to bottom: PE, DVE, ACT, Pool, SP, DMA")
+    axes[-1].set_xlabel("time (µs)   rows top to bottom: Tensor, Vector, Scalar, GPSIMD, Sync Engine, DMA")
     fig.subplots_adjust(hspace=0.55)
     legend(fig, 0.02)
-    save(fig, "fig18_gdn_timelines_all.png")
+    save(fig, "fig21_gdn_timelines_all.png")
 
 
 def waterfall():
@@ -135,7 +136,7 @@ def waterfall():
     ax.set_axisbelow(True)
     ax.set_title("gdn_block_tkg (b1, h128, 4 v-heads): latency after each iteration "
                  "(median of 7 interleaved captures, whiskers min-max)", fontsize=10)
-    save(fig, "fig09_gdn_waterfall.png")
+    save(fig, "fig10_gdn_waterfall.png")
 
 
 def dma_latency():
@@ -171,18 +172,19 @@ def dma_latency():
     ax.set_xlim(0, 48)
     ax.set_title("Every DGE DMA of the baseline: narrow writes into DRAM report completion "
                  "~10x later than loads", fontsize=10)
-    save(fig, "fig11a_dma_latency.png")
+    save(fig, "fig12a_dma_latency.png")
 
 
 def issue_cost():
     d = pd.read_csv(os.path.join(DATA, "gdn_dge_dma.csv"))
     d = d.drop_duplicates(subset=["engine", "desc", "issue_us", "iter"])
     fig, ax = plt.subplots(figsize=(6.4, 3.8))
-    for eng, c in (("Pool", VIOLET), ("SP", ORANGE), ("Activation", BLUE)):
+    for eng, c in (("Pool", VIOLET), ("SP", ORANGE), ("Activation", BLUE)):  # NEFF stream names
         g = d[d.engine == eng]
         jit = np.random.default_rng(1).uniform(-12, 12, len(g))
         ax.scatter(g.desc + jit, g.issue_us, s=16, color=c, alpha=0.7, edgecolors="none",
-                   label={"Activation": "ACT"}.get(eng, eng), zorder=3)
+                   label={"Pool": "GPSIMD Engine", "SP": "Sync Engine", "Activation": "Scalar Engine"}[eng],
+                   zorder=3)
     x = d.desc.values.astype(float)
     b, a = np.polyfit(x, d.issue_us.values, 1)
     xs = np.array([0, 1100])
@@ -198,7 +200,7 @@ def issue_cost():
     ax.legend(title="issuing engine", loc="lower right")
     ax.set_title("A DGE DMA costs ~0.6 µs of engine time,\nalmost regardless of size "
                  f"(all {len(d)} issues, 8 profiles)", fontsize=10)
-    save(fig, "fig12a_dge_issue_cost.png")
+    save(fig, "fig13a_dge_issue_cost.png")
     return a, b
 
 
