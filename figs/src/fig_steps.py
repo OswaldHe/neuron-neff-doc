@@ -325,7 +325,7 @@ def control_surface():
             c = marks.get(val, fill)
             box(ax, x, y - 1.6, 18, 3.2, val, fc=TINT.get(c, LIGHT_GRAY), ec=c, size=7.6, radius=0.4)
     label(ax, 1.5, 1.5, "* nkilib kernels are compiled with NKI's own allocation and scheduling; "
-          "kernel-call boundaries still force HBM tensors.", size=7.8, color=INK2)
+          "reused standalone kernels still take and return HBM tensors.", size=7.8, color=INK2)
     save(fig, "fig06_control_surface.png")
 
 
