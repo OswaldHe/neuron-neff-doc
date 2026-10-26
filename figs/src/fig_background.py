@@ -103,7 +103,7 @@ def neff_anatomy():
         box(ax, 58, yy - 2.6, 50, 5.4, "", fc=TINT.get(c, LIGHT_GRAY), ec=c)
         label(ax, 60, yy + 0.9, what, size=8.5, color=INK)
         label(ax, 60, yy - 1.2, where, size=8, color=INK2, family="DejaVu Sans Mono")
-    save(fig, "fig03_neff_anatomy.png")
+    save(fig, "neff_anatomy_detail.png")
 
 
 def slot_layout():
@@ -132,7 +132,7 @@ def slot_layout():
         (56, 63, "dst num[2],\nelem, dtypes", GREEN)])
     label(ax, x0, 37, "Every instruction is one 64-byte slot. Bytes 0-11 are the same for every opcode: "
           "opcode, then ONE semaphore wait and ONE semaphore update.", size=9, color=INK2)
-    save(fig, "fig04_slot_layout.png")
+    save(fig, "fig03_slot_layout.png")
 
 
 def dma_paths():
@@ -163,7 +163,7 @@ def dma_paths():
     label(ax, 65, 10, "one descriptor per contiguous run (e.g. 128 partitions x 2 B = 128 desc.)\n"
           "queue = the instruction's semaphore, owned by the issuing engine\n"
           "completion: S[sem] += 16, reported ~1.3-4 us after the data lands", size=8, va="center")
-    save(fig, "fig05_dma_paths.png")
+    save(fig, "fig04_dma_paths.png")
 
 
 def semaphores():
@@ -195,7 +195,7 @@ def semaphores():
           size=9, color=INK2)
     label(ax, 8, 1.5, "S[3..6] = GPSIMD / Scalar / Tensor / Vector Engine completion counters (+1 each);  "
           "DMA queue semaphores get +16 per finished transfer.", size=8, color=INK2)
-    save(fig, "fig06_semaphores.png")
+    save(fig, "fig05_semaphores.png")
 
 
 if __name__ == "__main__":

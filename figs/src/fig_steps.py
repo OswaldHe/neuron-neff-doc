@@ -51,7 +51,7 @@ def gdn_kernel():
     label(ax, 21, 5.5, "orange = HBM tensors handing data between the composed kernels "
           "(nl.shared_hbm).\nIn the NEFF they become ten small DRAM 'tmp-buf' variables: "
           "values go SBUF -> DRAM -> SBUF.", size=8, color=INK2)
-    save(fig, "fig09_gdn_kernel.png")
+    save(fig, "fig08_gdn_kernel.png")
 
 
 def step1():
@@ -83,7 +83,7 @@ def step1():
           "descriptors).\nEvery semaphore and wait stays as the compiler emitted it, so the change "
           "cannot break synchronisation. 6 buffers, outputs bit-identical.", size=8.3,
           color=INK2, va="top")
-    save(fig, "fig13b_step1_roundtrip.png")
+    save(fig, "fig12b_step1_roundtrip.png")
 
 
 def step2():
@@ -109,7 +109,7 @@ def step2():
           "the ISA enum but the compiler never emits it;\nthe compiled kernels only use '+1 on "
           "completion' (mode 19). Trap: wait threshold and add amount share one 4-byte value field.",
           size=8.2, color=INK2, va="top")
-    save(fig, "fig14b_step2_sem_add.png")
+    save(fig, "fig13b_step2_sem_add.png")
 
 
 def step3():
@@ -121,7 +121,7 @@ def step3():
                   "DGE queues; the GPSIMD Engine keeps a cheap relay", rows=rows, dma=False)
     axes[1].set_xlabel("time since the kernel's first instruction (µs)")
     legend(fig, -0.1, classes=[c for c in __import__("fig_data").CLASSES[:4]])
-    save(fig, "fig15_step3_queues.png")
+    save(fig, "fig14_step3_queues.png")
 
 
 def step4():
@@ -155,7 +155,7 @@ def step4():
     label(ax, 1, 2.5, "Illustrative sequence (not slot-exact). Tail loads went 4,2,4,2,4,2,4 -> 4,2,4; "
           "kernel total 13 -> 7. No set holds both silu and rsqrt, so 5 loads is the floor.",
           size=8, color=INK2)
-    save(fig, "fig16_step4_tables.png")
+    save(fig, "fig15_step4_tables.png")
 
 
 def step5():
@@ -197,7 +197,7 @@ def step5():
           "~1,500 tiny transpose descriptors serially (~8-15 ns each),\nso in that window only "
           "removing descriptors helped - three edits that merely started transfers earlier were "
           "correct and lost time.", size=8.2, color=INK2, va="top")
-    save(fig, "fig17_step5_pack.png")
+    save(fig, "fig16_step5_pack.png")
 
 
 def step6():
@@ -227,7 +227,7 @@ def step6():
     ax.tick_params(axis="y", length=0)
     ax.spines["left"].set_visible(False)
     ax.set_title("One byte: Scalar Engine slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'", fontsize=10)
-    save(fig, "fig18_step6_gate.png")
+    save(fig, "fig17_step6_gate.png")
 
 
 def step7():
@@ -247,7 +247,7 @@ def step7():
     ax.set_xlabel("engine time to issue (µs), cost model fitted on the profiles")
     ax.set_title("Merging tile loads buys issue time; then split again along the consumer boundary "
                  "(4 + 4 tiles)", fontsize=10)
-    save(fig, "fig19_step7_merge.png")
+    save(fig, "fig18_step7_merge.png")
 
 
 def attribution():
@@ -294,7 +294,7 @@ def attribution():
     a1.set_title("Steps 2-7 by lever type: 22.5 of 51 µs needed a non-NKI lever", fontsize=10)
     fig.legend(handles=[Patch(facecolor=c, label=l) for l, c in CAT.values()], loc="lower center",
                ncol=3, bbox_to_anchor=(0.5, -0.06), fontsize=8.3)
-    save(fig, "fig23_attribution.png")
+    save(fig, "fig22_attribution.png")
     return {k: (round(tot1[k], 1), round(tot2[k], 1)) for k in CAT}
 
 
@@ -326,7 +326,7 @@ def control_surface():
             box(ax, x, y - 1.6, 18, 3.2, val, fc=TINT.get(c, LIGHT_GRAY), ec=c, size=7.6, radius=0.4)
     label(ax, 1.5, 1.5, "* nkilib kernels are compiled with NKI's own allocation and scheduling; "
           "reused standalone kernels still take and return HBM tensors.", size=7.8, color=INK2)
-    save(fig, "fig07_control_surface.png")
+    save(fig, "fig06_control_surface.png")
 
 
 if __name__ == "__main__":
