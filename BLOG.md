@@ -163,24 +163,14 @@ We have not yet covered the most important part: the **instruction streams**. Ea
 
 ### Instruction and Pseudo Instruction
 
-Every instruction occupies one 64-byte slot, and byte 0 is its opcode, which selects one of about 190 layouts for the remaining bytes. The layouts are not publicly documented, but AWS's `neuron-dbg` tool ships the ISA definitions as Go structs with DWARF debug info, plus a compiled C accessor for every field, so we recovered every field offset from them. As a check, we decoded 2 million slots from 14 compiled kernels and compared every field with the profiler's own disassembly: every non-pseudo opcode matched. With these layouts, a slot reads like this (`tools/isa.py` decodes and re-encodes slots by field name):
+Based on the `neuron-dbg` disassembler tool, Trainium 2 has 128 instruction opcodes that share 82 instruction layouts. All of them follow a similar general pattern (Figure 3). Bytes 0–3 are a header whose first byte is the opcode, which decides how the rest of the slot is read. Bytes 4–11 are the events block, and bytes 12–63 hold the operands and the settings of the specific operation.
 
-```text
-// Activation0.bin: one 64-byte slot, decoded
-byte  0       opcode                ACTIVATE
-bytes 4-11    events: wait          S[6] >= 3       // start once S[6] (Vector Engine completions) reaches 3
-              events: update        S[4] += 1       // when done; S[4] counts Scalar Engine completions
-bytes 16-31   src                   addr 20744, step [1, 1, 1], num [1, 1, 1]
-bytes 33-35   out_dtype FP32, num_active_channels 128, activation_func 128
-bytes 48-63   dst                   addr 20760, step [1, 1, 1], num [1, 1, 1]
-```
+The **events** block is how an instruction synchronizes with the rest of the core. It contains the semaphore that this instruction waits for, the condition under which it may start (the semaphore must reach a threshold), and the semaphore that it updates when it finishes. The **operands** are tensors, each described by an address and an access pattern, the hardware form of NKI's `.ap(pattern=[[stride, count], ...], offset=...)`. The address encodes the start partition and the offset within it (`partition × 0x40000 + offset` for SBUF), and up to three `[step, count]` pairs (`step[3] num[3]` in Figure 3) walk the free dimensions, in elements. The partition dimension is not part of the pattern: the number of partitions is a separate field, such as `num_active_channels` in `ACTIVATE`. DMA instructions use the same idea with byte-based patterns and addresses that can also point into HBM. The meaning of the remaining bytes varies by opcode: [`docs/generated/opcodes.md`](docs/generated/opcodes.md) lists every opcode and its layout, and [`docs/generated/structs.md`](docs/generated/structs.md) gives the byte offset of every field in each layout.
 
-The rest of a compute instruction is its operation, data types and tensor operands. Each operand is an address plus an access pattern (a step and a count per dimension, in elements), and `num_active_channels` gives the number of partitions. The most important part, however, is **bytes 4–11, the events block**. It has the same layout in every instruction (Figure 3): one semaphore wait, one semaphore update, and one shared 32-bit value. An instruction can therefore wait on only one semaphore. When it depends on several producers, the compiler inserts extra `EVENT_SEMAPHORE` slots that do nothing but wait.
+![Figure 3: three instruction layouts](figs/fig03_slot_layout.png)
+*Figure 3. Three of the 82 layouts: a Tensor Engine `MATMUL`, a Scalar Engine `ACTIVATE` and a DGE DMA. Bytes 4-11 (the events block) are the same for every instruction: one semaphore wait, one semaphore update, and **one** shared 32-bit value.*
 
-![Figure 3: two instruction layouts](figs/fig03_slot_layout.png)
-*Figure 3. Two of the layouts. Bytes 4-11 (the events block) are the same for every instruction: one semaphore wait, one semaphore update, and **one** shared 32-bit value.*
-
-Most NKI calls map one-to-one onto instructions. The exceptions are the instructions that the compiler adds on its own, which is where NKI's control ends:
+Most NKI calls map one-to-one onto instructions. However, some NKI calls become several instructions, and the scheduling and synchronization between them are not controlled by NKI:
 
 | NKI call | Instructions in the NEFF |
 |---|---|
@@ -188,10 +178,10 @@ Most NKI calls map one-to-one onto instructions. The exceptions are the instruct
 | `nisa.activation` | Scalar Engine `ACTIVATE`, plus an `ACTIVATION_TABLE_LOAD` inserted by the compiler when the table changes |
 | `nisa.tensor_tensor` / `tensor_scalar` | `TENSOR_TENSOR_ARITH_OP` / `TENSOR_SCALAR_ARITH_OP` on the chosen engine |
 | `nisa.tensor_copy` | `COPY` / `CAST` on the Vector, Scalar or GPSIMD Engine |
-| `nisa.dma_copy` | a queued DMA (Sync Engine trigger + `SP0.json` entry) or a DGE DMA (`PSEUDO_DMA_DIRECT2D`) |
+| `nisa.dma_copy` | a queued DMA or a DGE DMA (`PSEUDO_DMA_DIRECT2D`) |
 | any call with more than one dependency | extra `EVENT_SEMAPHORE` slots, because a slot holds only one wait |
 
-Some slots are **pseudo-instructions**, with opcodes that start with `PSEUDO_`. The runtime rewrites them when it loads the NEFF, because only then are physical addresses and DMA ring registers known. Two of them matter in this post: `PSEUDO_DMATRIGGER`, which starts a queued DMA transfer, and `PSEUDO_DMA_DIRECT2D`, which describes a DMA whose descriptors are generated at run time. Barriers and loop labels are pseudo-instructions too. Since the rewrite happens at load time, a pseudo-instruction can be edited like any other slot. The next two sections look at the two kinds of slots that dominate small kernels: DMAs and semaphore operations.
+Some instructions are **pseudo-instructions**, with opcodes that start with `PSEUDO_`. A regular instruction is executed exactly as it is stored. A pseudo-instruction is a placeholder that still contains symbolic information, such as a queue name or a variable id, because physical addresses, DMA ring registers, and the rank id are known only at runtime. The Neuron runtime therefore rewrites every pseudo-instruction into regular instructions at load time.
 
 ---
 
@@ -199,21 +189,10 @@ Some slots are **pseudo-instructions**, with opcodes that start with `PSEUDO_`. 
 
 Compute instructions only touch on-chip memory. An SBUF address is `partition × 0x40000 + offset`, and PSUM addresses start at `0x2000000`. The compiler writes these addresses directly into the instructions, so in a NEFF an SBUF buffer is nothing more than a range of addresses, and an edit can claim unused SBUF simply by writing new addresses into the slots. The source and destination operands also carry their own partitions, so a single compute instruction can read partition 0 and write partition 32. Everything else, including every access to HBM, is a **DMA**.
 
-A DMA transfer is described by **descriptors**, each covering one contiguous run of bytes. A NEFF contains two kinds of DMA, which differ in when those descriptors are made (Figure 4). A **queued DMA** is listed in advance in an engine description (`SP0.json`, shown in the previous section), and the runtime turns it into hardware descriptors when it loads the NEFF. At run time, a `PSEUDO_DMATRIGGER` on the Sync Engine starts block *k* of a queue, and when the block finishes, the queue's semaphore `semaphore_set[k % 16]` grows by 16. A **DGE DMA** is a single `PSEUDO_DMA_DIRECT2D` instruction on the Sync, Scalar or GPSIMD Engine, and the descriptor generation engine (DGE) creates its descriptors at run time:
-
-```text
-// Pool0.bin: one DGE DMA slot, decoded
-opcode       PSEUDO_DMA_DIRECT2D
-src          dge-table[1] (an HBM input), offset 0, step [2, 1] B, num [128, 1], elem 2 B
-dst          SBUF offset 229120, step [262144, 1] B, num [128, 1], elem 2 B    // one element per partition
-dtype        BFLOAT16 -> BFLOAT16                                              // a DGE DMA can also cast
-completion   S[9] += 16                                                        // S[9] belongs to a GPSIMD Engine queue
-```
-
-The completion semaphore also selects the DMA queue, so it must belong to one of the issuing engine's queues in `def.json`.
+A DMA transfer is described by **descriptors**, each covering one contiguous run of bytes. A NEFF contains two kinds of DMA, which differ in when those descriptors are made (Figure 4). A **queued DMA** is listed in advance in an engine description (`SP0.json`, shown in the previous section), and the runtime turns it into hardware descriptors when it loads the NEFF. At run time, a `PSEUDO_DMATRIGGER` on the Sync Engine starts block *k* of a queue, and when the block finishes, the queue's semaphore `semaphore_set[k % 16]` grows by 16. A **DGE DMA** is a single `PSEUDO_DMA_DIRECT2D` instruction on the Sync, Scalar or GPSIMD Engine, whose descriptors are created at run time by descriptor generation (DGE): a hardware block for the Sync and Scalar Engines, and software for the GPSIMD Engine. Its completion semaphore also selects the DMA queue, so it must belong to one of the issuing engine's queues in `def.json`.
 
 ![Figure 4: queued DMA vs DGE DMA](figs/fig04_dma_paths.png)
-*Figure 4. Queued DMAs are described in JSON and turned into hardware descriptors when the NEFF is loaded. DGE DMAs are single instructions whose descriptors hardware generates at run time.*
+*Figure 4. Queued DMAs are described in JSON and turned into hardware descriptors when the NEFF is loaded. DGE DMAs are single instructions whose descriptors are generated at run time.*
 
 What makes DMAs expensive in small kernels is not the bytes they move but their fixed costs. These are the costs we measured in our profiles:
 
@@ -221,8 +200,10 @@ What makes DMAs expensive in small kernels is not the bytes they move but their 
 |---|---|
 | issuing a DGE DMA | **0.56 µs + 0.74 ns per descriptor** of the issuing engine's time |
 | issuing a queued trigger | 0.09–0.12 µs |
-| completion report of a DGE DMA after its data lands | 1.3–4 µs |
-| small write into DRAM (128 two-byte elements) | completion reported after **17–22 µs** |
+| completion of a queued DMA, from its trigger | ~1.2 µs (median) |
+| completion of a DGE DMA, from its issue | 1.3–4 µs (median 1.6 µs) |
+
+Which kind of DMA to use depends on what is known at compile time and on which engine has time to spare. A queued DMA is the cheaper choice for a transfer that is fully known when the kernel is compiled. Its descriptors are generated before the kernel runs, so at run time it costs only a ~0.1 µs trigger on the Sync Engine, whatever its size, and one transfer can carry many descriptors with complex patterns, casts or accumulation. But it is rigid: its addresses are fixed, and only the Sync Engine can start it. A DGE DMA costs about 0.6 µs of the issuing engine's time per transfer, but it is flexible. Its addresses can depend on values computed at run time, the GPSIMD Engine's software DGE can gather and scatter with a list of indices, and it can be issued by the Sync, Scalar or GPSIMD Engine. That last point matters more than it seems: a DGE DMA can sit in the stream of the engine that produces or consumes the data, which saves a semaphore hop to another engine, and it can use the queues of an engine that is idle. In NKI, this choice is the `dge_mode` argument of `nisa.dma_copy` (`none` for queued, `hwdge` for the Sync or Scalar Engine, `swdge` for the GPSIMD Engine). In the NEFF, it can still be changed after compilation, as the case study does when it moves weight loads onto the Scalar Engine's idle queues.
 
 Two rules constrain DMA edits. A queue's blocks must be triggered as a prefix of block-id order: skipping a block in the middle hangs the device. And concurrent DMA writes less than a word apart corrupt each other. Because of the fixed costs, the fastest DMA is often the one that is never issued. But every DMA is also a link in the program's synchronization, so removing one requires understanding semaphores.
 
@@ -248,9 +229,9 @@ Getting synchronization wrong fails in one of two ways. A wait that can never be
 ### What can we do in NEFF but not NKI?
 
 Writing better NKI is always the first step, and many of our optimizations could be expressed in NKI by restructuring the source. But a whole class of decisions is made by the compiler **after** the NKI source is written, and NKI 0.6.0 has no construct for them. Figure 6 and the table below compare the two levels.
-
+<!-- 
 ![Figure 6: who decides what](figs/fig06_control_surface.png)
-*Figure 6. What NKI 0.6.0 lets you express, what the compiler decides, and what a NEFF edit controls. Red = no handle at that level.*
+*Figure 6. What NKI 0.6.0 lets you express, what the compiler decides, and what a NEFF edit controls. Red = no handle at that level.* -->
 
 | Decision | NKI 0.6.0 | NEFF |
 |---|---|---|
@@ -452,6 +433,17 @@ To check that NEFF-only edits carry real weight in the *final* kernel, we revert
 
 One byte of synchronization, invisible at the NKI level, is worth 7% of this kernel's latency.
 
-#### Reproducing and browsing the profiles
+#### Acknowledgement & References
 
-Every NEFF in the trajectory and its profile (median capture) is in [`experiments/gdn_block_tkg_b1_h128_vh4_lnc1/blog_profiles/`](experiments/gdn_block_tkg_b1_h128_vh4_lnc1/blog_profiles/) (`iter0` = baseline … `iter7` = optimized, plus the one-byte ablation). Open any pair with `neuron-explorer view -n iterN.neff -s iterN.ntff`. The per-iteration notes, including every refuted lever and the measurement that closed it, are in [`experiments/gdn_block_tkg_b1_h128_vh4_lnc1/logs/`](experiments/gdn_block_tkg_b1_h128_vh4_lnc1/logs/). The figures are regenerated from [`figs/data/`](figs/data/) by the scripts in [`figs/src/`](figs/src/).
+This work is supported by the AWS Build on Trainium program at UCLA.
+
+The full NEFF documentation behind this post is in this repository. The [README](README.md) is the entry point to the chapters in [`docs/`](docs/), which cover the container, the definition file, the instruction format, DMA, synchronization and a step-by-step editing guide. The tools to unpack, decode, edit and repack a NEFF are in [`tools/`](tools/). Every experiment is reproducible from [`experiments/`](experiments/), with one folder per kernel configuration for all 12 kernels in Figure 7. Each folder holds the NKI source, the baseline and optimized NEFFs, the measurements, and the per-iteration notes and reviews of the optimization loop. For the case study, [`experiments/gdn_block_tkg_b1_h128_vh4_lnc1/blog_profiles/`](experiments/gdn_block_tkg_b1_h128_vh4_lnc1/blog_profiles/) holds all eight NEFFs of the trajectory with their profiles, which open with `neuron-explorer view -n iterN.neff -s iterN.ntff`. The figures are regenerated by the scripts in [`figs/src/`](figs/src/).
+
+References:
+
+[1] AWS Neuron documentation: [Trainium2 Architecture](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/about-neuron/arch/neuron-hardware/trainium2.html), [Trainium2 Architecture Guide for NKI](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/guides/architecture/trainium2_arch.html) and [About NKI](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/get-started/about/index.html), the sources of Figures 1 and 2.
+
+[2] [NKI Library](https://github.com/aws-neuron/nki-library) ([documentation](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/nki/library/about/index.html)), the kernels optimized in this post.
+
+[3] [Neuron Explorer](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/tools/neuron-explorer/index.html), the profiler used for every measurement.
+
