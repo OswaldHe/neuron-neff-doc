@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 from PIL import Image  # noqa: E402
 
+import style  # noqa: E402,F401  (registers Inter / JetBrains Mono)
+
 FIGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STEP = {1: "#ff7a59", 2: "#ffd166", 3: "#4cc9f0", 4: "#c3a6ff", 5: "#7bd389", 6: "#ff6fb5",
         7: "#ffffff"}
@@ -81,9 +83,9 @@ def draw(key, out, title):
     img = Image.open(os.path.join(FIGS, cfg["png"])).convert("RGB")
     W, H = img.size
     items = sorted([f for f in frames if f[6]], key=lambda f: f[0])
-    wrapped = [textwrap.wrap(f[6], 150) for f in items]
-    line_h, gap = 30, 22
-    leg_h = 80 + sum(len(w) * line_h + gap for w in wrapped)
+    wrapped = [textwrap.wrap(f[6], 110) for f in items]
+    line_h, gap = 48, 26
+    leg_h = 110 + sum(max(len(w) * line_h, 60) + gap for w in wrapped)
     dpi = 100
     fig = plt.figure(figsize=(W / dpi, (H + leg_h) / dpi), dpi=dpi, facecolor="#1b1d22")
     ax = fig.add_axes([0, leg_h / (H + leg_h), 1, H / (H + leg_h)])
@@ -97,22 +99,22 @@ def draw(key, out, title):
         y0, y1 = cfg["rows"][r0][0] + 3, cfg["rows"][r1][1] - 3
         ax.add_patch(Rectangle((x(t0), y0), x(t1) - x(t0), y1 - y0, fill=False, ec=c, lw=4,
                                ls=(0, (6, 4)) if dashed else "-", zorder=5))
-        ax.text(x(t0) + 4, y0 + 4, badge(steps), color="#111111", fontsize=22, weight="bold",
+        ax.text(x(t0) + 4, y0 + 4, badge(steps), color="#111111", fontsize=28, weight="bold",
                 va="top", ha="left", zorder=6,
                 bbox=dict(boxstyle="round,pad=0.15", fc=c, ec="none"))
     lg = fig.add_axes([0, 0, 1, leg_h / (H + leg_h)])
     lg.set_xlim(0, W)
     lg.set_ylim(leg_h, 0)
     lg.axis("off")
-    lg.text(30, 22, title, color="#f0efec", fontsize=24, weight="bold", va="top")
-    y = 80
+    lg.text(30, 26, title, color="#f0efec", fontsize=31, weight="semibold", va="top")
+    y = 110
     for (steps, *_rest), lines in zip(items, wrapped):
-        lg.text(30, y, badge(steps), color="#111111", fontsize=21, weight="bold", va="top",
+        lg.text(30, y, badge(steps), color="#111111", fontsize=27, weight="bold", va="top",
                 bbox=dict(boxstyle="round,pad=0.15", fc=STEP[steps[0]], ec="none"))
-        lg.text(170, y + 2, "\n".join(lines), color="#e6e4dc", fontsize=19, va="top",
-                linespacing=1.35)
-        y += len(lines) * line_h + gap
-    fig.savefig(os.path.join(FIGS, out), dpi=dpi, facecolor=fig.get_facecolor())
+        lg.text(190, y + 2, "\n".join(lines), color="#e6e4dc", fontsize=26, va="top",
+                linespacing=1.3)
+        y += max(len(lines) * line_h, 60) + gap
+    fig.savefig(os.path.join(FIGS, out), dpi=dpi, facecolor=fig.get_facecolor(), bbox_inches=None)
     plt.close(fig)
 
 
@@ -128,15 +130,15 @@ def utilization(out="fig20_profile_utilization.png"):
     from PIL import ImageDraw, ImageFont
     panels = [["gdn_iter0_dma.png", "gdn_iter7_dma.png"],
               ["gdn_iter0_util.png", "gdn_iter7_util.png"]]
-    w, pad, head = 1160, 24, 70
+    w, pad, head = 1160, 24, 92
     ims = [[Image.open(os.path.join(FIGS, p)).convert("RGB") for p in row] for row in panels]
     ims = [[im.resize((w, round(im.height * w / im.width))) for im in row] for row in ims]
     hs = [max(im.height for im in row) for row in ims]
     canvas = Image.new("RGB", (2 * w + 3 * pad, head + sum(hs) + 3 * pad), "#1b1d22")
     d = ImageDraw.Draw(canvas)
-    font = ImageFont.truetype(matplotlib.font_manager.findfont("DejaVu Sans:bold"), 40)
+    font = ImageFont.truetype(os.path.join(style.FONTS, "Inter-SemiBold.ttf"), 52)
     for c, t in enumerate(["Baseline: 217.5 µs", "Optimized: 44.4 µs"]):
-        d.text((pad + c * (w + pad) + 10, 18), t, fill="#f0efec", font=font)
+        d.text((pad + c * (w + pad) + 10, 20), t, fill="#f0efec", font=font)
     y = head
     for r, row in enumerate(ims):
         for c, im in enumerate(row):

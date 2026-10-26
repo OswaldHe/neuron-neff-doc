@@ -163,98 +163,91 @@ We have not yet covered the most important part: the **instruction streams**. Ea
 
 ### Instruction and Pseudo Instruction
 
-**Every instruction carries exactly one semaphore wait and one semaphore update. Most of the optimizations later in this post follow from that one fact.**
+Every instruction occupies one 64-byte slot, and byte 0 is its opcode, which selects one of about 190 layouts for the remaining bytes. The layouts are not publicly documented, but AWS's `neuron-dbg` tool ships the ISA definitions as Go structs with DWARF debug info, plus a compiled C accessor for every field, so we recovered every field offset from them. As a check, we decoded 2 million slots from 14 compiled kernels and compared every field with the profiler's own disassembly: every non-pseudo opcode matched. With these layouts, a slot reads like this (`tools/isa.py` decodes and re-encodes slots by field name):
 
-**Every instruction is one 64-byte slot.** Byte 0 is the opcode, which selects one of about 190 layouts. We did not have to guess these layouts. AWS's `neuron-dbg` tool ships the ISA definitions as Go structs with DWARF debug info, plus one compiled C accessor per field, and we read the field offsets out of both. As a check, we decoded 2 million slots from 14 compiled kernels and compared every field with the profiler's own disassembly: every non-pseudo opcode matches. `tools/isa.py` decodes and re-encodes slots by field name.
+```text
+// Activation0.bin: one 64-byte slot, decoded
+byte  0       opcode                ACTIVATE
+bytes 4-11    events: wait          S[6] >= 3       // start once S[6] (Vector Engine completions) reaches 3
+              events: update        S[4] += 1       // when done; S[4] counts Scalar Engine completions
+bytes 16-31   src                   addr 20744, step [1, 1, 1], num [1, 1, 1]
+bytes 33-35   out_dtype FP32, num_active_channels 128, activation_func 128
+bytes 48-63   dst                   addr 20760, step [1, 1, 1], num [1, 1, 1]
+```
+
+The rest of a compute instruction is its operation, data types and tensor operands. Each operand is an address plus an access pattern (a step and a count per dimension, in elements), and `num_active_channels` gives the number of partitions. The most important part, however, is **bytes 4–11, the events block**. It has the same layout in every instruction (Figure 3): one semaphore wait, one semaphore update, and one shared 32-bit value. An instruction can therefore wait on only one semaphore. When it depends on several producers, the compiler inserts extra `EVENT_SEMAPHORE` slots that do nothing but wait.
 
 ![Figure 3: two instruction layouts](figs/fig03_slot_layout.png)
 *Figure 3. Two of the layouts. Bytes 4-11 (the events block) are the same for every instruction: one semaphore wait, one semaphore update, and **one** shared 32-bit value.*
 
-A compute instruction is an opcode, its ALU operations and data types, and its tensor operands. Each operand is a 32-bit **address** plus an **access pattern**: a step and a count per dimension, in elements. The partition range is given separately, by `num_active_channels`. Most NKI calls map one to one onto instructions:
+Most NKI calls map one-to-one onto instructions. The exceptions are the instructions that the compiler adds on its own, which is where NKI's control ends:
 
-| NKI call | Instructions |
+| NKI call | Instructions in the NEFF |
 |---|---|
 | `nisa.nc_matmul` | Tensor Engine `LDWEIGHTS` + `MATMUL` |
-| `nisa.activation` | Scalar Engine `ACTIVATE` (+ `ACTIVATION_TABLE_LOAD` inserted by the compiler) |
-| `nisa.tensor_tensor` / `tensor_scalar` | Vector / GPSIMD / Scalar Engine `TENSOR_TENSOR_ARITH_OP` / `TENSOR_SCALAR_ARITH_OP` |
+| `nisa.activation` | Scalar Engine `ACTIVATE`, plus an `ACTIVATION_TABLE_LOAD` inserted by the compiler when the table changes |
+| `nisa.tensor_tensor` / `tensor_scalar` | `TENSOR_TENSOR_ARITH_OP` / `TENSOR_SCALAR_ARITH_OP` on the chosen engine |
 | `nisa.tensor_copy` | `COPY` / `CAST` on the Vector, Scalar or GPSIMD Engine |
 | `nisa.dma_copy` | a queued DMA (Sync Engine trigger + `SP0.json` entry) or a DGE DMA (`PSEUDO_DMA_DIRECT2D`) |
-| every call with more than one dependency | extra `EVENT_SEMAPHORE` slots, because a slot holds only one wait |
+| any call with more than one dependency | extra `EVENT_SEMAPHORE` slots, because a slot holds only one wait |
 
-**Pseudo-instructions** are the exception to "what you see is what runs". Their opcodes start with `PSEUDO_`, and the runtime rewrites them when it loads the NEFF, because only then are physical addresses, DMA ring registers and the rank id known:
-
-| Pseudo-instruction | Becomes at load time | Purpose |
-|---|---|---|
-| `PSEUDO_DMATRIGGER` | `WRITE`s to DMA ring registers | start queued transfer *k* of a queue |
-| `PSEUDO_DMA_DIRECT2D` (+ `PSEUDO_EXTENSION`) | `DMA_DIRECT2D` / `DMA_INDIRECT` | a DMA whose descriptors hardware generates at run time |
-| `PSEUDO_SYNC_BARRIER` / `PSEUDO_CORE_BARRIER` | `DRAIN` + `EVENT_SEMAPHORE` (+ `WRITE` to the other core) | barrier between engines / between cores |
-| `PSEUDO_GID_LOAD` | `MOVE $R[61] = rank` | rank-dependent code |
-| `PSEUDO_BRANCH_LABEL`, `..._PREFETCH_HINT` | nothing / hint | loops: branch targets are label ids |
-
-Since the rewrite happens at load time, you edit a pseudo-instruction like any other slot. The runtime also wraps each stream in its own prologue and epilogue, which synchronise the engines and reset the semaphores for the next run. In a profile they show up as instructions without a `compiler_pc`, before slot 0.
+Some slots are **pseudo-instructions**, with opcodes that start with `PSEUDO_`. The runtime rewrites them when it loads the NEFF, because only then are physical addresses and DMA ring registers known. Two of them matter in this post: `PSEUDO_DMATRIGGER`, which starts a queued DMA transfer, and `PSEUDO_DMA_DIRECT2D`, which describes a DMA whose descriptors are generated at run time. Barriers and loop labels are pseudo-instructions too. Since the rewrite happens at load time, a pseudo-instruction can be edited like any other slot. The next two sections look at the two kinds of slots that dominate small kernels: DMAs and semaphore operations.
 
 ---
 
 ### Memory Management and DMA
 
-**On small kernels, a DMA costs more to issue and to report as complete than to actually move its bytes.**
+Compute instructions only touch on-chip memory. An SBUF address is `partition × 0x40000 + offset`, and PSUM addresses start at `0x2000000`. The compiler writes these addresses directly into the instructions, so in a NEFF an SBUF buffer is nothing more than a range of addresses, and an edit can claim unused SBUF simply by writing new addresses into the slots. The source and destination operands also carry their own partitions, so a single compute instruction can read partition 0 and write partition 32. Everything else, including every access to HBM, is a **DMA**.
 
-**Addresses.** An SBUF operand address is `partition × 0x40000 + offset`. Kernels use offsets from 0x4000 up, the runtime reserves 8 bytes at 0x37FF8, and start partitions are multiples of 32. PSUM addresses are `0x2000000 + offset`, handed out in 2 KiB banks with 16 KiB per partition. Compute instructions never touch DRAM. One detail turned out to matter later: **the source and destination addresses each carry their own partition**, so a single compute instruction can read partition 0 and write partition 32.
+A DMA transfer is described by **descriptors**, each covering one contiguous run of bytes. A NEFF contains two kinds of DMA, which differ in when those descriptors are made (Figure 4). A **queued DMA** is listed in advance in an engine description (`SP0.json`, shown in the previous section), and the runtime turns it into hardware descriptors when it loads the NEFF. At run time, a `PSEUDO_DMATRIGGER` on the Sync Engine starts block *k* of a queue, and when the block finishes, the queue's semaphore `semaphore_set[k % 16]` grows by 16. A **DGE DMA** is a single `PSEUDO_DMA_DIRECT2D` instruction on the Sync, Scalar or GPSIMD Engine, and the descriptor generation engine (DGE) creates its descriptors at run time:
 
-**Two kinds of DMA** (Figure 4). A DMA transfer is described by *descriptors*, each covering one contiguous run of bytes. The two kinds of DMA differ in when those descriptors are made.
+```text
+// Pool0.bin: one DGE DMA slot, decoded
+opcode       PSEUDO_DMA_DIRECT2D
+src          dge-table[1] (an HBM input), offset 0, step [2, 1] B, num [128, 1], elem 2 B
+dst          SBUF offset 229120, step [262144, 1] B, num [128, 1], elem 2 B    // one element per partition
+dtype        BFLOAT16 -> BFLOAT16                                              // a DGE DMA can also cast
+completion   S[9] += 16                                                        // S[9] belongs to a GPSIMD Engine queue
+```
+
+The completion semaphore also selects the DMA queue, so it must belong to one of the issuing engine's queues in `def.json`.
 
 ![Figure 4: queued DMA vs DGE DMA](figs/fig04_dma_paths.png)
 *Figure 4. Queued DMAs are described in JSON and turned into hardware descriptors when the NEFF is loaded. DGE DMAs are single instructions whose descriptors hardware generates at run time.*
 
-- **Queued DMA.** Every transfer is listed in advance in `SP0.json`, with its queue, block id, semaphore and descriptors: source and destination variable, byte offsets, byte-based sizes and steps, and an operation (`copy`, `cast` or `add`). The runtime turns them into hardware descriptors at load time. During the run, a `PSEUDO_DMATRIGGER` on the Sync Engine starts block *k*, and when the block finishes, the queue's semaphore `semaphore_set[k % 16]` grows by 16.
-- **DGE DMA** (descriptor-generation engine). A single `PSEUDO_DMA_DIRECT2D` instruction on the Sync, Scalar or GPSIMD Engine carries a 2-D source and destination pattern in bytes, the element sizes and data types (so it can cast on the way), and the semaphore to add 16 to when it finishes. Hardware generates the descriptors at run time. **That semaphore also selects the queue**, so it must belong to the issuing engine's queue group in `def.json`.
-
-Here is what DMAs cost, measured on the case-study profiles (Figures 12a and 13a). For the small transfers typical of a decode kernel, the fixed costs dominate:
+What makes DMAs expensive in small kernels is not the bytes they move but their fixed costs. These are the costs we measured in our profiles:
 
 | Item | Cost |
 |---|---|
-| issuing a DGE DMA | **0.56 µs + 0.74 ns × descriptors** of engine time (fit over 312 issues) |
+| issuing a DGE DMA | **0.56 µs + 0.74 ns per descriptor** of the issuing engine's time |
 | issuing a queued trigger | 0.09–0.12 µs |
-| DGE completion reported after the data lands | ~1.3–4 µs, fixed latency (halving the bytes did not change it) |
-| SBUF→DRAM DGE write of 128 **2-byte** elements | completion after **17–22 µs** (~135 ns per element), and everything queued behind it waits too |
-| a partition→row transpose by DMA | one descriptor per partition per column |
-| `ACTIVATION_TABLE_LOAD` | 1.283 µs |
+| completion report of a DGE DMA after its data lands | 1.3–4 µs |
+| small write into DRAM (128 two-byte elements) | completion reported after **17–22 µs** |
 
-A few rules we confirmed on the device:
-
-- Descriptors inside one queued transfer run in order.
-- **A queue's blocks must be triggered as a prefix of block-id order.** Skipping a block in the middle hangs the device; leaving trailing blocks untriggered is fine.
-- Concurrent DMA writes less than a word apart corrupt each other.
-- Free SBUF above the compiler's highest offset is usable only up to about 245 KB per partition.
+Two rules constrain DMA edits. A queue's blocks must be triggered as a prefix of block-id order: skipping a block in the middle hangs the device. And concurrent DMA writes less than a word apart corrupt each other. Because of the fixed costs, the fastest DMA is often the one that is never issued. But every DMA is also a link in the program's synchronization, so removing one requires understanding semaphores.
 
 ---
 
 ### Synchronization
 
-**Semaphores are the whole schedule: they are the only thing that orders the five engines and the DMAs.** Figure 5 shows the model.
+The five engines and the DMA queues all run independently. The only thing that orders them is **semaphores**, so the semaphore waits and updates in a NEFF are, in effect, the whole schedule of the program (Figure 5).
 
 ![Figure 5: the semaphore model](figs/fig05_semaphores.png)
 *Figure 5. Engines and DMAs add to semaphores; instructions wait for thresholds. A threshold counts producers since the start of the kernel.*
 
-- **Who counts what.** A NeuronCore has 256 semaphores, and the runtime reserves S[0..2]. S[3], S[4], S[5] and S[6] count finished instructions on the GPSIMD, Scalar, Tensor and Vector Engines: an instruction marked `SEM_INC_COMPLETE` adds 1 when it finishes. DMA queue semaphores grow by 16 per finished transfer.
-- **Waits are absolute.** A wait `S[i] >= v` means "the v-th increment of S[i] has happened", counted from the start of the kernel, never as a delta. Within one engine, instructions complete in program order, and the compiler relies on that.
-- **One wait and one update per slot.** When an instruction depends on two producers, the compiler adds an `EVENT_SEMAPHORE` slot that does nothing but wait. The wait threshold and the add amount share one value field.
-- **An unused primitive.** The compiler uses exactly one wait mode (`>=`) and one update mode (+1 on completion), although the ISA defines more. **`SEM_ADD_IMM_COMPLETE` (+N on completion) works on the device but is never emitted**, and it became one of our most useful tools.
+A NeuronCore has 256 semaphores, and the runtime reserves S[0..2]. S[3] to S[6] count finished instructions on the GPSIMD, Scalar, Tensor and Vector Engines: an instruction whose update mode is `SEM_INC_COMPLETE` adds 1 when it finishes. A DMA queue's semaphore grows by 16 per finished transfer. Waits are absolute. `S[i] >= v` means "the *v*-th increment of S[i] has happened since the start of the kernel", never a delta. Instructions on one engine also finish in program order, and the compiler relies on that.
 
-Editing rules, each tested on the device against exactly predicted outputs:
-1. **Think in producers, not numbers.** Before an edit, write down which instruction or DMA produces each increment a wait counts. After the edit, recompute the thresholds.
-2. **Removing an instruction:** replace it with an `EVENT_SEMAPHORE` that keeps its wait and update, or delete it and lower every later threshold that counted it, in all five engines.
-3. **Adding an instruction** raises later thresholds, *and* its consumer must now wait for it.
-4. **Never remove waits on an engine's own completion semaphore.** Engines start the next instruction before the previous one has finished writing. Removing the Vector Engine's self-waits gave wrong numbers; removing the GPSIMD Engine's self-waits gave out-of-bounds DMAs.
-5. **A single compiler wait often guarantees several things.** Before deleting a DMA, check what its semaphore was *transitively* ordering, and which other thresholds can now be reached early.
+The compiler uses this machinery conservatively: one wait mode (`>=`) and one kind of update (an increment on completion), although the ISA defines more. In particular, **`SEM_ADD_IMM_COMPLETE`, which adds an arbitrary amount when an instruction finishes, works on the device but is never emitted**. It lets a cheap `EVENT_SEMAPHORE` stand in for the completion of a DMA, and it became one of our most useful tools.
 
-Getting synchronisation wrong fails in two ways. A wait that can never be met hangs the core (`NRT_TIMEOUT`). A wait that is met too early does not hang: it produces wrong numbers, sometimes only under the profiler's timing. That is why we verify every edit with several runs *and* profile it with repeats before trusting it.
+Because thresholds are absolute counts, every edit has to keep the counts consistent. We found it easiest to **think in producers, not numbers**: before an edit, write down which instruction or DMA produces each increment that a wait counts, and recompute the thresholds afterwards. Removing an instruction means either replacing it with an `EVENT_SEMAPHORE` that keeps its wait and update, or lowering every later threshold that counted it, in all five engines. Adding one raises later thresholds, and its consumer must now wait for it. Two traps are worth knowing. Waits on an engine's own completion semaphore must never be removed, because engines start the next instruction before the previous one has finished writing. And a single compiler wait often guarantees several things at once, so before deleting a DMA, check what its semaphore was ordering *transitively*.
+
+Getting synchronization wrong fails in one of two ways. A wait that can never be met hangs the core (`NRT_TIMEOUT`). A wait that is met too early does not hang, but produces wrong numbers, sometimes only under the profiler's timing. That is why we verify every edit with several runs and profile it before trusting it. None of these waits appear in the NKI source, and that is the core of the gap between NKI and the NEFF.
 
 ---
 
 ### What can we do in NEFF but not NKI?
 
-Writing better NKI is always the first step, and much of what we did *could* be expressed in NKI by restructuring the source. But a whole class of decisions is made by the compiler **after** the NKI source is written, and NKI 0.6.0 has no construct for them. Figure 6 and the table below compare the two levels.
+Writing better NKI is always the first step, and many of our optimizations could be expressed in NKI by restructuring the source. But a whole class of decisions is made by the compiler **after** the NKI source is written, and NKI 0.6.0 has no construct for them. Figure 6 and the table below compare the two levels.
 
 ![Figure 6: who decides what](figs/fig06_control_surface.png)
 *Figure 6. What NKI 0.6.0 lets you express, what the compiler decides, and what a NEFF edit controls. Red = no handle at that level.*
@@ -262,84 +255,64 @@ Writing better NKI is always the first step, and much of what we did *could* be 
 | Decision | NKI 0.6.0 | NEFF |
 |---|---|---|
 | ISA op, operands, dtypes, tile shapes | ✅ `nki.isa` calls | ✅ slot fields |
-| Where a tensor lives, SBUF address | ✅ `buffer=`, `address=` (but reused standalone kernels take and return HBM tensors) | ✅ any address |
+| Where a tensor lives, SBUF address | ✅ `buffer=`, `address=` | ✅ any address |
 | Which engine runs a compute op | ✅ `engine=` on most ops | ✅ any engine that implements the opcode |
-| Which engine issues a DMA | ⚠️ `dge_mode` + `engine=sync\|scalar` (HWDGE) or gpsimd (SWDGE) | ✅ plus *where* in that engine's stream |
+| Which engine issues a DMA | ⚠️ `dge_mode` + `engine=` | ✅ plus *where* in that engine's stream |
 | Which DMA queue / semaphore a transfer uses | ❌ | ✅ `semaphore` field, `def.json` queues |
-| Queued-DMA descriptors and block triggering | ⚠️ access pattern only | ✅ `SP0.json`, trigger slots |
-| Instruction order on one engine | ⚠️ program order (`nl.no_reorder`), not relative to compiler-inserted instructions | ✅ exact |
-| **Which semaphore each instruction waits on, and the threshold** | ❌ derived by the compiler from dependencies | ✅ events block, bytes 4-11 |
+| Instruction order on one engine | ⚠️ program order, not relative to compiler-inserted instructions | ✅ exact |
+| **Which semaphore each instruction waits on, and the threshold** | ❌ derived by the compiler | ✅ events block, bytes 4-11 |
 | **Signal "done" without moving data** (`SEM_ADD_IMM_COMPLETE`) | ❌ never emitted | ✅ |
-| **Activation-table loads: how many, where** | ❌ inserted by `optimize_act_control` | ✅ delete or move `ACTIVATION_TABLE_LOAD` |
-| Compiler-inserted barriers, queue-guard waits, dummy transfers | ❌ | ✅ |
+| **Activation-table loads: how many, where** | ❌ inserted by the compiler | ✅ delete or move `ACTIVATION_TABLE_LOAD` |
+| Compiler-inserted barriers, guard waits, dummy transfers | ❌ | ✅ |
 
-**These NEFF-only levers matter in practice.** Across the 12 kernels in this study, they produced some of the best gains per byte changed:
-- **gdn_tkg (LNC=2):** 12 Tensor Engine waits were re-pointed at the Scalar Engine cast that actually produces each operand. 4 of the 12 producers did not signal the semaphore the Tensor Engine waited on, so the Tensor Engine sat idle for up to 2 µs after its data was ready. No instruction moved; only waits were renumbered.
-- **gdn_tkg (LNC=1):** deleting 18 do-nothing `EVENT_SEMAPHORE` slots (no wait, no update) on the Vector Engine's critical cycle saved 0.72 µs. Even a slot that synchronises nothing costs queue time.
-- **selective_scan:** 170 redundant self-waits were stripped after moving additions from the Vector Engine to the GPSIMD Engine.
-- **gdn_cte (b1 s128):** output stores were moved onto **new DMA queues added to `def.json`**.
-- **gdn_block_tkg:** activation-table loads went from 13 to 7, and one gate was re-pointed in a single byte (3.0 µs, see the case study).
+These NEFF-only levers matter in practice. Across the 12 kernels we studied, they include re-pointing a wait to the instruction that actually produces the data, deleting `EVENT_SEMAPHORE` slots that synchronize nothing, moving transfers onto unused DMA queues (or new queues added to `def.json`), and deleting activation-table loads whose table is already resident. They are often the best gains per byte changed: a single re-pointed wait can be worth several percent of a kernel's latency.
 
-What about NKI's own escape hatches? NKI 0.6.0 does contain an internal, unexported `inline_asm_bytes` hook, used by an experimental dequantize kernel, that emits a raw instruction body. Even there you only declare the instruction's memory reads and writes, and the compiler still decides its semaphores (`sync_type.datapath`). The synchronisation rows of the table stay out of reach.
+NKI does have an internal, unexported escape hatch, `inline_asm_bytes`, which emits a raw instruction body. Even there, you only declare the instruction's memory reads and writes, and the compiler still decides its semaphores. The synchronization rows of the table stay out of reach.
 
-Finally, the two levels **depend on each other**. Several NKI-expressible edits in the case study paid nothing until a NEFF-only edit removed the gate in front of them. In step 3, converting DMAs into compute instructions was worth exactly 0.0 µs on its own, and 3.6 µs together with the queue move.
+Finally, the two levels **depend on each other**. An NKI-expressible change often pays nothing until a NEFF-only change removes the gate in front of it, as the case study will show.
 
 ---
 
 ### Design Scope: What should we modify for better performance
 
-**Find the binder first.** We use *binder* for whatever sets the latency: the busiest unit, or a chain of waits on the critical path. Engine utilisation tells you where to look, not how much there is to gain. `selective_scan` had its Vector Engine 99% busy and gained only 1.20x, because that busy work *was* the scan. `gdn_block_tkg` had no unit above 24% busy and gained 4.9x, because it spent its time waiting for DMA completions.
+A NEFF has thousands of slots, and most of them are not worth editing. The first job is to **find the binder**, whatever currently sets the latency: the busiest unit, or a chain of waits on the critical path. Engine utilization tells you where to look, not how much there is to gain. In our study, a scan kernel with its Vector Engine 99% busy gained only 1.20x, because that busy work *was* the scan. A decode kernel with no unit above 24% busy gained 4.9x, because it spent its time waiting for DMA completions.
 
-The tool that worked best was a **backward critical-path walk** over the profile. Start from the last instruction. For each instruction, decide whether it was held up by the previous instruction on its engine or by a semaphore wait (the profiler's `SemaphoreUpdate` table records when each threshold was reached). Jump to whichever came later, and repeat. Every step of the resulting chain has about 0.02 µs of slack, and every long hop in it is a candidate edit.
+The tool that worked best was a **backward critical-path walk** over the profile. Start from the last instruction. For each instruction, decide whether it was held up by the previous instruction on its engine or by a semaphore wait (the profiler records when each threshold was reached), jump to whichever came later, and repeat. Every long hop in the resulting chain is a candidate edit. These are the levers that worked across our 12 kernels:
 
-**The playbook.** These are the levers used across the 12 kernels, where each one lives in the NEFF, and whether NKI could express it:
-
-| Lever | Where in the NEFF | Measured effect (examples) | In NKI? |
+| Lever | Where in the NEFF | Typical effect | In NKI? |
 |---|---|---|---|
-| Remove SBUF→DRAM→SBUF staging that only reshapes data | DGE slot bytes 16-63 or `SP0.json` descriptors | gdn_block_tkg −122 µs; gdn_cte b32 s64 1.36x in one step | by restructuring (reused kernels have HBM inputs and outputs) |
-| Replace a redundant DMA with a semaphore increment | events block of the DMA slot | ~0.6 µs issue + 2-7 µs completion hop → 0.03 µs | ❌ (`SEM_ADD_IMM` never emitted) |
-| Turn a small DMA into a compute `CAST`/`COPY` (also across partitions) | new slot from a template + waits | −1.5 to −2.9 µs each | ✅ `tensor_copy` |
-| Move work to an idle engine (DGE issue, Scalar→Vector Engine, Vector→GPSIMD Engine) | move slots between streams; an `EVENT_SEMAPHORE` relay keeps counts | gdn_tkg: 36 scale ops Scalar→Vector Engine; selective_scan: 170 adds Vector→GPSIMD Engine | ⚠️ engine choice only |
-| Re-point / relax / split semaphore waits | `events_wait_idx`, value | one byte = 3.0 µs; dropped stale waits −3.5 µs | ❌ |
-| Delete no-op sync slots on the critical cycle | `EVENT_SEMAPHORE` slots | 18 slots −0.72 µs (gdn_tkg) | ❌ |
-| Fewer activation-table loads | `ACTIVATION_TABLE_LOAD` + moving `ACTIVATE`s | 13→7 (gdn_block_tkg), 46→6 (gdn_tkg); ssd removed 1,266 of 1,531 reloads by computing `exp(-x)` instead of `1/exp(x)` | ⚠️ only by reordering or rewriting activations |
-| Fewer, larger DMAs; fewer descriptors | DGE `num_elem`/`step_elem` dims; descriptors | 8 tile loads 5.5→1.3 µs of issue; 512→128 descriptors | mostly |
-| Hoist work stuck behind unrelated instructions | permute slots, re-point waits by producer | −1.56 µs (CASTs above unrelated DMAs) | ⚠️ program order only |
-| Wider instructions (merge runs of identical ops) | access-pattern dims | 993 runs merged (gdn_cte, −1.1%); 24 per-head silu → 1 (gdn_tkg) | ✅ |
+| Remove SBUF→HBM→SBUF staging that only reshapes data | DMA slot addresses, `SP0.json` descriptors | the largest single wins | only by restructuring the source |
+| Replace a redundant DMA with a semaphore increment | events block of the DMA slot | ~0.6 µs issue + 2–7 µs completion → 0.03 µs | ❌ |
+| Turn a small DMA into a compute `CAST` / `COPY` | new slot + waits | 1.5–2.9 µs each | ✅ `tensor_copy` |
+| Move work or DMAs to an idle engine or queue | move slots; an `EVENT_SEMAPHORE` relay keeps the counts | removes serial issue time | ⚠️ engine only |
+| Re-point, relax or split semaphore waits | events block | up to several µs per wait | ❌ |
+| Delete no-op sync slots on the critical path | `EVENT_SEMAPHORE` slots | ~0.04 µs per slot | ❌ |
+| Fewer activation-table loads | `ACTIVATION_TABLE_LOAD` + moving `ACTIVATE`s | ~1.3 µs per load | ⚠️ only indirectly |
+| Fewer, larger DMAs; fewer descriptors | DGE access patterns | ~0.56 µs per DMA removed | mostly |
+| Hoist work stuck behind unrelated instructions | slot order + waits | depends on the stall | ⚠️ program order only |
 
 ![Figure 7: speed-ups across 12 kernels](figs/fig07_speedups.png)
-*Figure 7. NEFF-only optimisation of 12 nkilib kernel configurations: 79 loop iterations, none rejected by the verifier.*
+*Figure 7. NEFF-only optimization of 12 nkilib kernel configurations: 79 loop iterations, none rejected by the verifier.*
 
-**What does not work.** Each of these is tempting, and each was measured:
-- removing waits on an engine's own completion semaphore (wrong numbers, or out-of-bounds DMAs);
-- relaxing a wait so a DMA starts earlier while the DMA engine is saturated (correct, and slower);
-- merging transfers that already run on separate queues (the queues *were* the parallelism);
-- splitting a big store (its completion latency is fixed);
-- overlapping two DGE transfers from the Sync Engine (passes verification, then hangs the device);
-- moving a DGE DMA into another engine's stream (wrong results);
-- moving a dtype-converting Scalar Engine op across a table load (it reads the active table);
-- setting the `dma_transpose_2d_tile` bit (no effect);
-- deleting 707 provably redundant waits in gdn_cte (correct, but worth 0 µs: they were not on the critical path).
+Some tempting edits do not pay, and we measured each of them. Removing an engine's waits on its own completion semaphore gives wrong results. Letting a DMA start earlier does not help when the DMA engine is already saturated. Merging transfers that already run on separate queues removes the parallelism. Deleting redundant waits that are not on the critical path is correct but worth nothing.
 
-**How we kept it correct.** Every iteration had to pass a verifier that runs the NEFF on the device with fixed inputs and requires each output to stay within 1.2x of the *unedited* NEFF's own error against PyTorch. The verifier also pins the launch shape: same core count, no collectives, same interface. Latency is the device's own `total_exec_time`, taken as the median of several captures, with candidates interleaved (A B A B) because the device drifts by a few percent over minutes. Twice an edit passed the verifier and then hung under the profiler, so profiling with repeats became part of the correctness check.
+To keep every edit correct, each iteration had to pass a verifier that runs the NEFF on the device with fixed inputs and requires each output to stay within 1.2x of the *unedited* NEFF's own error against PyTorch, with the same core count and interface. Latency is the device's own `total_exec_time`, taken as the median of several captures, with candidates interleaved (A B A B) because the device drifts by a few percent over minutes. Twice an edit passed the verifier and then hung under the profiler, so profiling became part of the correctness check too. With the format, the costs and the levers in place, we can now walk through one kernel end to end.
 
 ---
 
 ### Case Study: Optimize Gated DeltaNet (GDN) in NKILib
 
-**The kernel.** `gdn_block_tkg` is a fused decode step (one token) of a Qwen3.5-style Gated DeltaNet layer. Here it is configured with hidden size 128, 2 key heads repeated to 4 value heads, and head dimension 128 (`gdn_block_tkg_b1_h128_vh4`). It reuses two validated components unchanged, `gdn_conv1d_decode` and `gdn_tkg`, as nested `@nki.jit` calls, and data passes between its four stages through HBM tensors (Figure 8).
+`gdn_block_tkg` is a fused decode step (one token) of a Qwen3.5-style Gated DeltaNet layer, configured here with hidden size 128, 2 key heads repeated to 4 value heads, and head dimension 128 (`gdn_block_tkg_b1_h128_vh4`). It reuses two validated nkilib kernels unchanged, `gdn_conv1d_decode` and `gdn_tkg`, as nested `@nki.jit` calls, so data passes between its four stages through HBM tensors (Figure 8). We run it on one physical core (LNC=1).
 
 ![Figure 8: the GDN decode kernel](figs/fig08_gdn_kernel.png)
 *Figure 8. The four stages and the HBM tensors between them. In the compiled NEFF these hand-offs become ten small DRAM `tmp-buf` variables.*
 
-**The baseline is the opposite of compute-bound.** The busiest unit, DMA, is active 24% of the time; the Scalar Engine 19%; the Tensor Engine 3%. About 127 µs of the ~215 µs is spent with engines waiting on DMA completion semaphores. The baseline executes 95 DGE DMAs and 13 activation-table loads.
-
-Figure 9 shows the baseline as neuron-explorer draws it, with each region framed by the step that later removes it. Most of the trace sits inside the dashed frame ①. From 38 to 204 µs the engines are mostly idle, apart from a few short compute bursts and the DMA bursts on the Sync, Scalar and GPSIMD Engines. Those bursts are 2-byte writes into DRAM, each followed by a 17–22 µs wait for its completion report. Before that stretch, the GPSIMD Engine spends 21 µs issuing 32 load DMAs back to back (③⑦). After it, the Scalar Engine spends its tail switching activation tables seven times (④⑤), and the 1 KB output leaves through nine queued DMAs (⑤).
+The baseline is far from compute-bound. Its busiest unit, DMA, is active only 24% of the time, the Scalar Engine 19% and the Tensor Engine 3%, and about 127 µs of the 217.5 µs is spent with engines waiting on DMA completion semaphores. Figure 9 shows the baseline in neuron-explorer, with each region framed by the optimization step that later removes it. From 38 to 204 µs the engines are mostly idle (①), while small writes into DRAM wait 17–22 µs each for their completion reports. Before that, the GPSIMD Engine spends 21 µs issuing 32 load DMAs back to back (③⑦). After it, the Scalar Engine switches activation tables seven times (④⑤).
 
 ![Figure 9: the baseline profile, framed by the step that fixes each region](figs/fig09_profile_baseline_framed.png)
-*Figure 9. The baseline in neuron-explorer (`gdn-block-tkg-0-baseline`). The axis covers the whole capture, 232 µs including the runtime's own prologue and epilogue (the bars before ~12 µs); the kernel itself takes 217.5 µs. Frame numbers are the optimization steps below.*
+*Figure 9. The baseline in neuron-explorer. The axis covers the whole capture, 232 µs including the runtime's own prologue and epilogue (the bars before ~12 µs); the kernel itself takes 217.5 µs. Frame numbers are the optimization steps below.*
 
-**The trajectory** (Figure 10). We optimized the kernel in seven iterations of an automated edit-verify-measure loop. An agent proposed and applied NEFF edits, the verifier checked each one on the device, and a second model reviewed every iteration and ranked the next candidates. For this post we re-measured all eight NEFFs back to back, with 7 interleaved captures each.
+We optimized the kernel in seven iterations of an automated edit–verify–measure loop. An agent proposed and applied NEFF edits, the verifier checked each one on the device, and a second model reviewed every iteration. For this post we re-measured all eight NEFFs, with 7 interleaved captures each (Figure 10). The final NEFF differs from the baseline in only 6 of its 46 files, and its outputs are **bit-identical** to the baseline's.
 
 ![Figure 10: latency per iteration](figs/fig10_gdn_waterfall.png)
 *Figure 10. Latency after each step on one Trainium2 NeuronCore (trn2.3xlarge, LNC=1): median of 7 interleaved device captures, whiskers min-max; lower is better.*
@@ -349,168 +322,116 @@ Figure 9 shows the baseline as neuron-explorer draws it, with each region framed
 | 0 | 217.5 µs | | 1.00x | as compiled | |
 | 1 | 95.4 µs | 2.28x | 2.28x | DRAM round trips → SBUF→SBUF | only by un-composing the kernels |
 | 2 | 83.2 µs | 1.15x | 2.61x | delete redundant DMAs, merge tiny tile loads | outcome yes; the mechanism is NEFF-only |
-| 3 | 75.0 µs | 1.11x | 2.90x | re-host 8 DMAs on the Scalar Engine's idle queues; drop stale waits | **partly / NEFF-only** |
+| 3 | 75.0 µs | 1.11x | 2.90x | re-host 8 DMAs on idle Scalar Engine queues; drop stale waits | **partly / NEFF-only** |
 | 4 | 60.0 µs | 1.25x | 3.63x | DMAs → compute `CAST`s; split a wait; delete 4 table loads | mixed |
 | 5 | 51.0 µs | 1.18x | 4.26x | 512→128 transpose descriptors; delete 2 table loads | mixed |
 | 6 | 47.7 µs | 1.07x | 4.56x | **one byte**: re-point a gate | **NEFF-only** |
 | 7 | 44.4 µs | 1.07x | 4.90x | merge tile loads; hoist work past unrelated DMAs | mostly |
-
-The final NEFF differs from the baseline in only 6 of its 46 members: `Activation0.bin` (105→114 slots), `DVE0.bin` (114→127), `Pool0.bin` (71→75), `PE0.bin`, `SP0.bin` and `SP0.json`. Its outputs are **bit-identical** to the baseline's, which we checked again on the device for this post.
 
 ![Figure 11: timeline before and after](figs/fig11_gdn_timeline.png)
 *Figure 11. One profiled execution before and after, on the same time axis. Orange = DMA issue, yellow = table loads, green = DMA data in flight.*
 
 #### Step 1 — Route the DRAM round trips through SBUF (217.5 → 95.4 µs, 2.28x)
 
-**Rerouting six DRAM round trips through SBUF removed 122 µs, without changing a single semaphore.**
-
-*The problem.* Every HBM hand-off in Figure 8 became DRAM traffic in the NEFF: one DMA writes small per-partition values into a DRAM `tmp-buf`, and another reads them back. Joining each DGE DMA with the semaphore increments that report its completion shows what that costs (Figure 12a).
-
-Reads from DRAM complete in about 1.6 µs. **Writes of 128 two-byte elements into DRAM take 17–22 µs to report completion**, and anything queued behind them waits too, up to 38 µs. The bytes themselves land within 0.6 µs; it is the completion report that is slow. With about 30 such transfers in 5–6 serial rounds, most of the kernel was spent waiting.
+Every HBM hand-off in Figure 8 became DRAM traffic in the NEFF: one DMA writes small per-partition values into a DRAM `tmp-buf`, and another reads them back. Reads from DRAM complete in about 1.6 µs. Writes of 128 two-byte elements, however, take **17–22 µs to report completion**, although the bytes land within 0.6 µs, and everything queued behind them waits too (Figure 12a). With about 30 such transfers in 5–6 serial rounds, the kernel spent most of its time waiting.
 
 ![Figure 12a: DMA completion latency by direction and element size](figs/fig12a_dma_latency.png)
 *Figure 12a. Every DGE DMA of the baseline: time from issue until its completion semaphore is reached, from one profiled execution. The bar marks the median.*
 
-*The fix, in the NEFF* (Figure 12b). Each writer/reader pair is really a per-partition copy, sometimes with a bf16→fp32 cast. So we give the **writer the reader's destination** and the **reader the writer's source**. Now both perform the same SBUF→SBUF copy (a DGE DMA can cast on the way), the writer's completion means "the data is in place", and the reader becomes a harmless repeat. **No semaphore and no wait changes**, so the edit cannot break synchronisation.
-
-Concretely, we rewrote bytes 16–63 of the `PSEUDO_DMA_DIRECT2D` slots in `SP0.bin`, `Pool0.bin` and `Activation0.bin`, plus the matching queued descriptors in `SP0.json`. One wait was re-pointed; no slot was inserted or deleted.
+Each writer/reader pair is really a per-partition copy, sometimes with a bf16→fp32 cast. So we give the **writer the reader's destination** and the **reader the writer's source** (Figure 12b). Both now perform the same SBUF→SBUF copy, the writer's completion means "the data is in place", and the reader becomes a harmless repeat. In the NEFF, this only rewrites the address fields (bytes 16–63) of the DGE DMA slots and the matching queued descriptors in `SP0.json`. Only one wait had to be re-pointed, so the edit barely touches synchronization, and all 122 µs came out of idle time.
 
 ![Figure 12b: the writer/reader swap](figs/fig12b_step1_roundtrip.png)
 *Figure 12b. A DRAM round trip becomes an SBUF→SBUF copy by swapping address fields between the two DMAs.*
 
-*The result.* Engine busy times barely moved (Scalar Engine 42.0→42.3 µs, GPSIMD Engine 35.8→35.8 µs), but DMA activity fell from 53 to 35 µs, and **all 122 µs came out of idle time**. No DGE DMA now takes more than 6.6 µs from issue to completion; before, the worst took 37 µs.
-
-*Could NKI do it?* Yes, but only by giving up composition. The round trips trace to specific source lines: `gdn_block_tkg.py:96` stores `mixed`, `gdn_conv1d.py:191/221` loads and stores, `gdn_block_tkg.py:325-336` splits per head, and `gdn_tkg.py:169-170` loads. They exist because the block reuses `gdn_conv1d_decode` and `gdn_tkg` unchanged, and those kernels take and return HBM tensors. To avoid them in NKI, you would rewrite both as helpers that pass SBUF tiles, as the block already does for its own `in_proj` code. The NEFF edit gets the same result and leaves the source modular.
-
-*Pitfall.* Our first attempt split a gather across concurrent DMAs that wrote 2 bytes apart, and the writes corrupted each other. Concurrent destinations must be at least a word (in practice 256 B) apart, or be ordered inside one queued transfer.
+Could NKI do it? Yes, but only by giving up composition. The round trips exist because the block reuses `gdn_conv1d_decode` and `gdn_tkg` unchanged, and those kernels take and return HBM tensors. Avoiding them in NKI means rewriting both as helpers that pass SBUF tiles. The NEFF edit gets the same result and leaves the source modular.
 
 #### Step 2 — Delete DMAs, not just shrink them (95.4 → 83.2 µs, 1.15x)
 
-**Replacing redundant DMAs with semaphore increments cut another 12 µs.**
-
-*The problem.* Step 1 left 16 DMAs that repeat a copy someone else already made, plus 5 "signal-only" DMAs. Shrinking them does not help, because **a DGE DMA costs about 0.56 µs of engine time almost regardless of its size** (Figure 13a). Together, the 95 DGE DMAs took about 60 µs of issue time on the GPSIMD, Sync and Scalar Engines.
+Step 1 left 16 DMAs that repeat a copy already made by another DMA, plus 5 that only signal completion. Shrinking them does not help, because a DGE DMA costs about 0.56 µs of engine time almost regardless of its size (Figure 13a).
 
 ![Figure 13a: DGE issue cost](figs/fig13a_dge_issue_cost.png)
 *Figure 13a. Engine time to issue a DGE DMA against its descriptor count, all 312 issues in the 8 profiles.*
 
-*The fix, in the NEFF.* We overwrite the DMA slot with an `EVENT_SEMAPHORE` that waits for the real producer and then does **`SEM_ADD_IMM_COMPLETE` +16 on the DMA's own semaphore** (Figure 13b). Every waiter stays as it was. The cost drops from 0.55 µs, plus a 2–7 µs completion hop, to 0.03 µs, and the semaphore moves the moment the real data is ready.
+Instead, we overwrite each one with an `EVENT_SEMAPHORE` that waits for the same producer and then adds 16 to the DMA's own semaphore with `SEM_ADD_IMM_COMPLETE` (Figure 13b). Every waiter downstream stays as it was. In bytes, the change is the opcode and two event fields:
 
-In the same iteration, 8 per-partition Scalar Engine DMAs became compute `CAST`s (0.25 µs, with the result visible immediately), and the 8 tiny `conv_weight` tile loads (2 KB each) became one 2-D DMA with a negative tile stride.
+```text
+// SP0.bin slot 13, bytes 0-11
+before:  d4 10 00 00 05 48 00 00 10 00 00 00   PSEUDO_DMA_DIRECT2D  wait S[72] >= 16; its completion adds 16 to S[62]
+after:   a0 10 00 00 05 48 15 3e 10 00 00 00   EVENT_SEMAPHORE      wait S[72] >= 16; then S[62] += 16 (SEM_ADD_IMM_COMPLETE)
+```
 
 ![Figure 13b: DMA replaced by a semaphore add](figs/fig13b_step2_sem_add.png)
 *Figure 13b. Removing a DMA without touching any wait in the program.*
 
-*The result.* GPSIMD Engine busy time fell from 35.8 to 26.9 µs, Sync Engine from 28.0 to 20.3 µs, and DMA from 34.6 to 29.1 µs.
-
-*Lesson.* Merging only pays for small tiles. Merging the 32 KB `W_in_z`/`W_in_qkv` tiles was correct but **slower** (+0.9 to +1.5 µs), because it moved bytes that used to stream over several queues in parallel onto a single queue.
-
-*Could NKI do it?* An NKI rewrite would never emit these duplicate DMAs, and `tensor_copy` and a 3-D `dma_copy` exist. The **mechanism**, however, a semaphore increment that stands in for a transfer, has no NKI equivalent, and later steps reuse it constantly.
+The cost drops from about 0.55 µs, plus a 2–7 µs completion hop, to 0.03 µs. In the same iteration, 8 per-partition Scalar Engine DMAs became compute `CAST`s, and 8 tiny tile loads became one 2-D DMA. Could NKI do it? An NKI rewrite would never emit these duplicate DMAs in the first place, but the mechanism, a semaphore increment that stands in for a transfer, has no NKI equivalent, and later steps reuse it constantly.
 
 #### Step 3 — Re-host DMAs on idle queues, drop stale waits (83.2 → 75.0 µs, 1.11x)
 
-**Moving eight weight loads onto the Scalar Engine's unused DMA queues, and dropping waits that guarded nothing, cut 8.2 µs.**
-
-*The problem.* The critical-path walk put **the GPSIMD Engine's prologue of 25 back-to-back weight-load DMAs** (~17 µs of pure issue) at the head of the kernel, followed by ~27 µs of chained DMA-completion waits.
-
-*The fix, in the NEFF.* `def.json` gives the Scalar Engine 16 DGE queues (semaphores 72-87), but the compiler used only 72-79. So we **inserted** 8 slots into `Activation0.bin`. Inserting works: nothing records a stream's length, and this kernel has no branches. Each new slot is a verbatim copy of a GPSIMD Engine DMA with only its `semaphore` field changed to 80-87.
-
-The vacated GPSIMD Engine slot becomes `EVENT_SEMAPHORE wait S[80+j] >= 16, SEM_ADD_IMM S[old] += 16`, a cheap relay that keeps **every downstream wait byte-identical**. Then:
-- the compiler's queue-guard waits (`own semaphore >= 16`) on the moved DMAs no longer guarded anything and were dropped (−1.4 µs);
-- the waits on 7 queued-DMA triggers whose blocks had become duplicates or dummies were dropped (−2.1 µs);
-- the DMA whose completion gates the kernel's first instruction is now issued first.
+The critical path now started with the GPSIMD Engine issuing 25 weight-load DMAs back to back, about 17 µs of pure issue time. `def.json` gives the Scalar Engine 16 DGE queues (semaphores 72–87), but the compiler used only 72–79. So we **inserted** 8 slots into `Activation0.bin`, each a copy of a GPSIMD Engine DMA with only its semaphore changed to 80–87. Nothing records a stream's length, so inserting slots works. Each vacated GPSIMD Engine slot becomes a cheap relay, `EVENT_SEMAPHORE wait S[80+j] >= 16; S[old] += 16`, which keeps every downstream wait byte-identical. With the DMAs moved, the compiler's guard waits on them, and the waits on 7 now-redundant queued triggers, guarded nothing, so we dropped them (Figure 14).
 
 ![Figure 14: GPSIMD and Scalar Engines before and after step 3](figs/fig14_step3_queues.png)
 *Figure 14. The first 36 µs of iterations 2 and 3. The GPSIMD Engine's serial DMA issue (orange) is shared with the Scalar Engine, and the Scalar Engine's dense head finishes ~5 µs earlier.*
 
-*Lesson.* The `CAST` conversions in this step were worth exactly **0.0 µs on their own** and 3.6 µs together with the queue move: on their own, the binder simply moved somewhere else. Where the inserted DMAs sit in the Scalar Engine's stream also mattered more than how many we moved. Placing them in front of the Scalar Engine's first `ACTIVATE` delayed the root of the whole dependency graph.
-
-*Could NKI do it?* Only in part. `dma_copy(dge_mode=hwdge, engine=scalar)` can ask the Scalar Engine to issue a DMA, but **choosing the queue and semaphore, the relay, and dropping guard and trigger waits are NEFF-only**. Those NEFF-only levers account for about 3.4 of the 8.2 µs gained in this step, and the engine move and DMA issue order (NKI-indirect) for another 3.9 µs.
+Could NKI do it? Only in part. `dma_copy(..., engine=scalar)` can ask the Scalar Engine to issue a DMA, but choosing the queue and semaphore, the relay, and dropping the guard waits are NEFF-only, and they account for about 3.4 of the 8.2 µs. This step also shows how the two levels depend on each other: the `CAST` conversions in it, which NKI could express, were worth exactly 0.0 µs on their own and 3.6 µs together with the queue move.
 
 #### Step 4 — DMAs become compute; activation tables stop thrashing (75.0 → 60.0 µs, 1.25x)
 
-**Turning DMAs into compute instructions and deleting four activation-table loads cut 15 µs, the largest step after the first.**
+Between ~34 and ~50 µs, the DMA engine was a serial bottleneck, retiring about 1,500 two-byte transpose descriptors one after another. Edits that let transfers start earlier were correct but slower, so the only way forward was to take work away from the DMA engine. Since a compute instruction's source and destination carry their own partitions, small cross-partition copies became Scalar or GPSIMD Engine `CAST`s (1.5–2.9 µs each). One wait that carried four guarantees was also split, moving the late guarantee to the only consumer that needed it (−1.3 µs).
 
-*The problem.* Between ~34 and ~50 µs, the DMA engine was a **serial bottleneck**, retiring ~1,500 two-byte transpose descriptors at ~15 ns each. Three edits that let transfers *start earlier* were correct, and all of them lost time. Only removing descriptors from the DMA engine could help.
-
-*The fix, in the NEFF.*
-- **Compute instead of DMA.** The compiler's own Vector Engine slot 88 reads partition 0 and writes partition 32, which showed that a compute address carries its own partition. A queued p0→p32 cast became 4 Scalar Engine `CAST`s (−2.9 µs), a queued gather became 4 `CAST`s (−1.8 µs), and a 512-descriptor within-partition gather became 4 GPSIMD Engine `CAST`s (−1.5 µs).
-- **Split a wait that carried four guarantees.** One gate waited for the *latest* of four DMAs, but only one consumer, ~9 µs later, needed that last DMA. Moving the late guarantee onto that consumer, as an inserted `EVENT_SEMAPHORE`, saved 1.3 µs.
-- **Delete redundant activation-table loads** (Figure 15). The Scalar Engine holds one table set at a time, and the per-head tail alternated silu (table 2) and rsqrt (table 4): `4,2,4,2,4,2,4`, at 1.283 µs per switch. An `ACTIVATION_TABLE_LOAD` whose table is already resident can be replaced by a no-op, as long as **no instruction's resident table changes**. Moving one silu `ACTIVATE` into the previous table-2 region deleted 2 loads (−1.6 µs), and giving another op a private in-place destination deleted 2 more (−1.7 µs). Step 5 finished the job.
-- The last DRAM round trips, including the output epilogue's, were made direct (−1.5 µs).
+The Scalar Engine's tail had a second problem: it alternated silu (table 2) and rsqrt (table 4) per head, `4,2,4,2,4,2,4`, at 1.3 µs per switch (Figure 15). An `ACTIVATION_TABLE_LOAD` whose table is already resident can be removed, as long as no instruction's resident table changes. Moving one silu `ACTIVATE` into the previous table-2 region and giving another op a private destination deleted 4 loads (−3.3 µs).
 
 ![Figure 15: activation-table loads](figs/fig15_step4_tables.png)
 *Figure 15. Tail of the per-head loop, illustrative. Loads go 4,2,4,2,4,2,4 → 4,2,4; the kernel total goes 13 → 7.*
 
-*Could NKI do it?* The `CAST`s, yes (`tensor_copy`). The table loads, **only indirectly**: NKI has no table-load API, so the best it can do is reorder activations and hope the backend's `optimize_act_control` pass coalesces them. Splitting a wait is **NEFF-only**.
+Could NKI do it? The `CAST`s, yes (`tensor_copy`). The table loads only indirectly: NKI has no table-load API, so the best it can do is reorder activations and hope that the compiler coalesces the loads. Splitting a wait is NEFF-only.
 
 #### Step 5 — Fewer descriptors, the last table loads (60.0 → 51.0 µs, 1.18x)
 
-**Packing four columns per descriptor cut transpose descriptors by 4x; with two more table loads gone, latency dropped another 9 µs.**
-
-*The problem.* A partition→row transpose of 4 columns costs 4 × 128 descriptors, and the DMA engine retires them one after another.
-
-*The fix, in the NEFF* (Figure 16). We first pack the 4 two-byte columns into **8 contiguous bytes per partition** with 4 compute `CAST`s, then move them with **one 128-descriptor DMA of 8-byte elements**. The consumers read the interleaved row with a stride of 4. That includes the Tensor Engine's reverse-stride `LDWEIGHTS`, which accepts all of its strides scaled by 4. Applied to two transpose groups, this saved 1.4 and 2.8 µs.
+A partition→row transpose of 4 columns costs 4 × 128 descriptors, retired one after another. We first pack the 4 two-byte columns into **8 contiguous bytes per partition** with 4 compute `CAST`s, then move them with **one 128-descriptor DMA of 8-byte elements**, and the consumers read the interleaved row with a stride of 4 (Figure 16). Applied to two transpose groups, this saved 4.2 µs. In the same iteration, two more redundant table loads were removed (−2.9 µs), and the 9 queued DMAs of the output became a single 1 KB store (−1.7 µs).
 
 ![Figure 16: packing before transposing](figs/fig16_step5_pack.png)
 *Figure 16. 512 → 128 descriptors per transpose group.*
 
-The biggest single win of the iteration (−2.9 µs) removed the last two redundant table loads. It had failed in step 4 for a subtle reason. An fp32 `[128,1]` result is 512 bytes, and it overlapped a 256-byte bf16 matmul operand that **the Tensor Engine reads with no semaphore in between**, so moving the op earlier overwrote live data. Static analysis cannot see this; scanning the profile's operand strings for the whole byte range can. A private destination fixed it. In the same iteration, the 9 queued DMAs of the output epilogue became a single 1 KB store (−1.7 µs).
-
-*Hazard.* Replacing a DMA with a semaphore add can let a **third, untouched** wait pass early. Here, a threshold of 32 became reachable from two `EVENT_SEMAPHORE` adds alone. That NEFF passed the verifier and then hung under the profiler.
-
-*Could NKI do it?* Packing and the single store, yes. The table loads, only indirectly. Leaving trailing queue blocks untriggered is NEFF-only.
+Could NKI do it? The packing and the single store, yes. The table loads, again, only indirectly.
 
 #### Step 6 — One byte (51.0 → 47.7 µs, 1.07x)
 
-**Changing one byte, the semaphore that one instruction waits on, saved 2.4 µs.**
+The Scalar Engine sat idle for 3.7 µs in front of slot 54, an `EVENT_SEMAPHORE` waiting on S[28]. That semaphore belonged to a queued block that, after step 1, only writes 2 bytes into a dead buffer. The Sync Engine triggered it only after the real transfer had completed (S[67]), so it reported about 2.6 µs after the data was already in place (Figure 17). The fix is one byte, the wait index:
 
-*The problem.* The Scalar Engine sat idle for 3.7 µs in front of slot 54, an `EVENT_SEMAPHORE` waiting on `S[28]`. That semaphore belonged to a queued block that, after step 1, only writes 2 bytes into a dead buffer. The block worked as a *proxy*: the Sync Engine triggered it only after the real transfer (`S[67]`) had completed, so it landed ~2.6 µs after the data (Figure 17).
-
-*The fix, in the NEFF.* Change `events_wait_idx` of that slot from **28 to 67**: byte 5 of one 64-byte slot.
+```text
+// Activation0.bin slot 54, bytes 0-11
+before:  a0 10 00 00 05 1c 00 00 10 00 00 00   EVENT_SEMAPHORE  wait S[28] >= 16   // the dummy transfer
+after:   a0 10 00 00 05 43 00 00 10 00 00 00   EVENT_SEMAPHORE  wait S[67] >= 16   // the real transfer
+```
 
 ![Figure 17: the proxy gate](figs/fig17_step6_gate.png)
 *Figure 17. The gate waited on a dummy transfer that is always triggered after the real one completes.*
 
-*The result.* −2.4 µs. The rest of the iteration moved 8 Scalar Engine `CAST`s to the Vector Engine (−0.3 µs), and hoisted 4 silu `ACTIVATE`s above two compiler barriers that only gate the Vector Engine's reads (−0.6 µs).
-
-*Lesson.* The `CAST` move taught us that when same-shaped Scalar Engine ops already overlap (each starts 0.39 µs after the previous one starts), making them shorter buys nothing. Measure the *union* of instruction intervals, not the sum of their durations.
-
-*Could NKI do it?* No. NKI has no way to choose which semaphore an instruction waits on. To be fair, this particular proxy was a leftover of our own step 1, but the lever itself, choosing which event an instruction waits on, is exactly what NKI does not expose.
+That byte saved 2.4 µs, and the rest of the iteration moved 8 `CAST`s from the Scalar Engine to the Vector Engine and hoisted 4 silu `ACTIVATE`s above two barriers that only gate the Vector Engine (−0.9 µs). Could NKI do it? No. NKI has no way to choose which semaphore an instruction waits on. To be fair, this particular proxy was a leftover of our own step 1, but the lever itself is exactly what NKI does not expose.
 
 #### Step 7 — Merge for issue time, split for latency (47.7 → 44.4 µs, 1.07x)
 
-**Merging eight tile loads into one DMA, then splitting it where consumers need it, cut the last 3.2 µs.**
-
-*The problem and the fix* (Figure 18). The 8 `in_proj` weight tiles were loaded by 8 DMAs of 128 descriptors each. By the measured cost model (≈0.6 µs fixed + 0.7 ns per descriptor), that is 5.5 µs of issue, whereas **one DMA of 1024 descriptors** costs 1.3 µs. The tile index goes into dimension 1 of the DGE access pattern, and 8 relay `EVENT_SEMAPHORE`s restore the semaphore counts that the dropped DMAs used to provide. Then:
-- the merged table-2 tile load was **split again along its consumer boundary** (4 + 4 tiles), so the Vector Engine's tiles land 1.2 µs sooner (−0.5 µs);
-- the GPSIMD Engine's 8-`CAST` packing run was **hoisted above three DRAM spill DMAs it does not depend on**, which removed the Scalar Engine's 2.2 µs wait on the transpose it feeds (−1.6 µs);
-- the first table load was hoisted above a barrier, so it now runs during the stall (−0.4 µs).
+The 8 `in_proj` weight tiles were loaded by 8 DMAs of 128 descriptors each. By the cost model, that is 5.5 µs of issue time, against 1.3 µs for **one DMA of 1,024 descriptors** (Figure 18). We merged them by moving the tile index into dimension 1 of the DGE access pattern, and 8 relay `EVENT_SEMAPHORE`s restore the semaphore counts that the dropped DMAs used to provide.
 
 ![Figure 18: merging tile loads](figs/fig18_step7_merge.png)
 *Figure 18. Issue-time cost model for the 8 tile loads.*
 
-*Lessons.* On its own, the merge was a **+0.6 µs regression**: the binder moved to the Sync Engine's transposes, whose completion reports got slower when issued back to back. A win can look like a loss until the next binder is fixed.
-
-A merge can also **silently drop a program-order dependency**. Merging two Sync Engine transposes made one of them read a buffer ~0.2 µs before the Scalar Engine wrote it, and the verifier still passed (bit-identical, by luck of timing). Reverting that merge was both correct and 0.45 µs faster.
+On its own, the merge was a +0.6 µs regression, because the binder moved to the Sync Engine. Two follow-ups turned it into a win. The merged load was split again at its consumer boundary, so the Vector Engine's tiles land 1.2 µs sooner (−0.5 µs). A GPSIMD Engine `CAST` run was hoisted above three DRAM spill DMAs that it does not depend on (−1.6 µs). The first table load was also hoisted above a barrier, so it now runs during a stall (−0.4 µs). A win can look like a loss until the next binder is fixed.
 
 #### Before and after in neuron-explorer
 
-Figure 19 shows the optimized NEFF in the same view, with each step framed where it shows up. Note that the axis is about four times shorter than in Figure 9. The long idle stretch is gone (①). The Scalar Engine now issues the weight loads itself, as three merged DMAs (③⑦), while the GPSIMD Engine starts with the merged `conv_weight` load and then mostly runs cheap semaphore relays (②③). GPSIMD Engine `CAST`s take over the per-partition copies and pack columns for the transposes (④⑤). The Sync Engine is left with five SBUF→SBUF DGE DMAs (①⑤). The one-byte gate releases the Scalar Engine's scale ops as soon as the transpose lands (⑥), the tail needs two table loads instead of seven (④⑤), and the output leaves in a single store (⑤).
+Figure 19 shows the optimized NEFF in the same view, with each step framed where it shows up; note that its time axis is about four times shorter than in Figure 9. The long idle stretch is gone (①). The Scalar Engine now issues the weight loads itself, as three merged DMAs (③⑦), while the GPSIMD Engine mostly runs cheap semaphore relays (②③) and `CAST`s that pack columns for the transposes (④⑤). The one-byte gate releases the Scalar Engine as soon as the transpose lands (⑥), the tail needs two table loads instead of seven (④⑤), and the output leaves in a single store (⑤).
 
 ![Figure 19: the optimized profile, framed by the step behind each change](figs/fig19_profile_optimized_framed.png)
-*Figure 19. The optimized NEFF in neuron-explorer (`gdn-block-tkg-7-optimized`). The capture is 59 µs, including the runtime's prologue and epilogue; the kernel takes 44.4 µs. The bars before ~12 µs belong to the runtime.*
+*Figure 19. The optimized NEFF in neuron-explorer. The capture is 59 µs, including the runtime's prologue and epilogue; the kernel takes 44.4 µs.*
 
-Figure 20 compares neuron-explorer's utilisation panels for the two profiles, each as a share of its own capture:
-- **DMA engines.** The 16 DMA engines (64–79) are about 5% busy each in the baseline: the kernel moves very little data and spends its time waiting for completion reports. After optimization they are 8–41% busy, and engines 64–71 carry the Scalar Engine's merged weight loads (278 KB between 13.9 and 19.2 µs).
-- **Compute engines.** Active time rises for every engine (Tensor 3→11%, Vector 8→31%, Scalar 18→60%, GPSIMD 15→31%), because roughly the same instructions now run in a quarter of the time. The Scalar Engine ends up as the binding engine.
+Figure 20 compares neuron-explorer's utilization panels. In the baseline, each of the 16 DMA engines is only about 5% busy: the kernel moves very little data and spends its time waiting for completion reports. After optimization, they are 8–41% busy, and the compute engines' active share rises as well (Tensor 3→11%, Vector 8→31%, Scalar 18→60%, GPSIMD 15→31%), because roughly the same instructions now run in a quarter of the time. The Scalar Engine ends up as the binder, 80% busy and with its remaining table loads on the critical path.
 
 ![Figure 20: DMA and FLOPs utilization before and after](figs/fig20_profile_utilization.png)
-*Figure 20. neuron-explorer's DMA-utilisation (per DMA engine) and FLOPs-utilisation (per compute engine) panels. Left: baseline. Right: optimized.*
+*Figure 20. neuron-explorer's DMA-utilization (per DMA engine) and FLOPs-utilization (per compute engine) panels. Left: baseline. Right: optimized.*
 
 ![Figure 21: every iteration](figs/fig21_gdn_timelines_all.png)
 *Figure 21. All eight versions on one time axis.*
-
-**Where it ends.** At 44.4 µs the Scalar Engine is the binder: 80% busy (union of intervals), with 6.2 µs of idle time left in 8 gaps, and its remaining 7 table loads are on the critical path. Five loads is the floor, because no shipped table set holds both silu and rsqrt. Per-engine active time, baseline → optimized: Tensor Engine 7.6→6.6, Scalar Engine 42.0→35.6, Vector Engine 19.1→18.3, GPSIMD Engine 35.8→18.6, Sync Engine 26.9→6.4, DMA 53.0→17.7 µs.
 
 #### NKI vs NEFF in this case study
 
@@ -519,9 +440,7 @@ We tagged each of the 34 edit groups by whether NKI could express it. Figure 22 
 ![Figure 22: attribution](figs/fig22_attribution.png)
 *Figure 22. Latency removed by lever type. Blue: expressible in NKI by restructuring the source. Purple: NKI has only a coarse or indirect knob. Orange: no NKI construct.*
 
-- **Step 1 (122 µs) is NKI-expressible**, at the price of rewriting three composed kernels into one.
-- **Of the 51 µs removed after step 1, 22.5 µs (44%) needed a lever NKI cannot express directly**: 9.3 µs NEFF-only (waits, semaphore adds, queue triggering, barrier placement) and 13.2 µs NKI-indirect (queue choice, table loads, order relative to compiler-inserted instructions).
-- If these effects simply added up, an NKI-only route would stop somewhere between ~53 and ~67 µs, while the NEFF reaches 44.4 µs: another 1.2–1.5x. Edits interact, so read this as an estimate rather than a bound.
+Step 1 (122 µs) is NKI-expressible, at the price of rewriting three composed kernels into one. Of the 51 µs removed after step 1, however, **22.5 µs (44%) needed a lever that NKI cannot express directly**: 9.3 µs were NEFF-only (waits, semaphore adds, queue triggering, barrier placement), and 13.2 µs NKI-indirect (queue choice, table loads, order relative to compiler-inserted instructions). If these effects simply added up, an NKI-only route would stop somewhere between ~53 and ~67 µs, while the NEFF reaches 44.4 µs. Edits interact, so read this as an estimate rather than a bound.
 
 To check that NEFF-only edits carry real weight in the *final* kernel, we reverted two of them in the optimized NEFF and measured again (7 interleaved captures each; all outputs bit-identical):
 
@@ -531,7 +450,7 @@ To check that NEFF-only edits carry real weight in the *final* kernel, we revert
 | step 6 reverted | **1 byte**: Scalar Engine slot 49 `events_wait_idx` 67 → 28 | 47.43 µs | 47.00-48.43 | **+3.01 µs (+6.8%)** |
 | step 7 table-load hoist reverted | 2 slots swapped (Scalar Engine slots 4 ↔ 5) | 44.65 µs | 44.47-44.91 | +0.23 µs (+0.5%, marginal) |
 
-One byte of synchronisation, invisible at the NKI level, is worth 7% of this kernel's latency.
+One byte of synchronization, invisible at the NKI level, is worth 7% of this kernel's latency.
 
 #### Reproducing and browsing the profiles
 
