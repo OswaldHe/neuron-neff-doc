@@ -149,49 +149,67 @@ def step4():
                     (MUTED, "table-agnostic (square, copy, CAST)", 56)):
         box(ax, x, 8.2, 2.2, 3.2, "", fc=c, ec=c, radius=0.3)
         label(ax, x + 3.2, 9.8, n, size=10)
-    label(ax, 1, 5.6, "Illustrative sequence (not slot-exact). Tail loads went 4,2,4,2,4,2,4 -> 4,2,4; kernel "
-          "total 13 -> 7.\nNo set holds both silu and rsqrt, so 5 loads is the floor.", size=10, color=INK2,
-          va="top")
     save(fig, "fig15_step4_tables.png")
 
 
 def step5():
-    fig, ax = canvas(9, 6.0, 100)
-    cols = (BLUE, VIOLET, GREEN, ORANGE)
-    label(ax, 1, 64.5, "A partition -> row transpose costs one DMA descriptor per partition per column",
-          size=11.5, weight="semibold", color=INK)
+    """Partition->row transpose of four vectors: 512 descriptors, or pack first and use 128."""
+    fig, ax = canvas(9, 4.9, 100)
+    cw, ch = 2.9, 2.5
+    vec = [("A", BLUE), ("B", VIOLET), ("C", GREEN), ("D", ORANGE)]
 
-    def grid(x0, y0, w=3.3, h=1.2, ncol=4, rows=8, gap=0.35):
-        for r in range(rows):
-            for c in range(ncol):
-                box(ax, x0 + c * w, y0 - r * h, w - gap, h - 0.25, "", fc=cols[c % 4], ec=cols[c % 4],
-                    radius=0.15)
-    label(ax, 1, 59.5, "before: 4 transfers x 128 descriptors (2 B each)", size=10.5, color=INK,
-          weight="medium")
-    grid(2, 55)
-    label(ax, 2, 44.4, "SBUF: 128 partitions,\n4 columns 256 B apart", size=9.5, color=INK2, va="top")
-    for k, c in enumerate(cols):
-        arrow(ax, 16, 51.5 - k * 1.2, 26.5, 55.2 - k * 3.4, color=c, lw=1.3)
-        box(ax, 27, 54 - k * 3.4, 32, 2.4, "", fc=c, ec=c, radius=0.2)
-    label(ax, 62, 50, "4 rows in partition 0:\n512 descriptors,\n~5 µs of DGE time", size=10,
-          color=ORANGE, va="center")
-    label(ax, 1, 37, "after: pack by compute, then 1 transfer x 128 descriptors (8 B each)", size=10.5,
-          color=INK, weight="medium")
-    grid(2, 32.5)
-    arrow(ax, 16, 28.5, 24.5, 28.5, lw=1.4)
-    label(ax, 20.25, 30.6, "4 CASTs", size=9.5, ha="center")
-    grid(25.5, 32.5, w=1.7, gap=0.3)
-    label(ax, 25.5, 22, "8 contiguous bytes\nper partition", size=9.5, color=INK2, va="top")
-    arrow(ax, 33, 28.5, 40.5, 28.5, lw=1.4)
-    for k in range(28):
-        c = cols[k % 4]
-        box(ax, 41.5 + k * 1.15, 27.2, 0.95, 2.6, "", fc=c, ec=c, radius=0.1)
-    label(ax, 41.5, 24.8, "one interleaved row; consumers read it with stride 4\n(incl. the Tensor Engine's "
-          "reverse-stride LDWEIGHTS: every step x4)", size=9.5, color=INK2, va="top")
-    label(ax, 1, 15.5, "Applied to both transpose groups: -1.4 µs and -2.8 µs. The DMA engine retires ~1,500 "
-          "tiny transpose\ndescriptors serially (~8-15 ns each), so in that window only removing descriptors "
-          "helped: three edits\nthat merely started transfers earlier were correct and lost time.", size=10,
-          color=INK2, va="top")
+    def cell(x, y, v, i, c, hi=False):
+        box(ax, x, y, cw - 0.25, ch - 0.25, f"{v}{i}", fc=c, ec=INK if hi else c, size=7.5, radius=0.25,
+            color="white", lw=1.6 if hi else 1.0)
+
+    def columns(x0, ytop, packed):
+        for p in range(4):
+            y = ytop - p * ch
+            label(ax, x0 - 1, y + ch / 2 - 0.1, f"p{p}", size=9, ha="right", color=MUTED)
+            for k, (v, c) in enumerate(vec):
+                cell(x0 + k * (cw if packed else cw + 1.4), y, v, p, c)
+        label(ax, x0 + (2 * cw if packed else 2 * cw + 2.1), ytop - 4 * ch + 0.9, "...", size=11,
+              ha="center", color=MUTED)
+
+    def row(x0, y, seq, hi=None):
+        label(ax, x0 - 1, y + ch / 2 - 0.1, "p0", size=9, ha="right", color=MUTED)
+        for k, item in enumerate(seq):
+            if item is None:
+                label(ax, x0 + k * cw + cw / 2, y + ch / 2 - 0.1, "...", size=11, ha="center", color=MUTED)
+            else:
+                v, i, c = item
+                cell(x0 + k * cw, y, v, i, c, hi=(v == hi))
+        return x0 + len(seq) * cw
+
+    # before: column layout -> row layout, one descriptor per value
+    label(ax, 1, 49, "Before: the DMA moves each value separately (4 x 128 = 512 descriptors)",
+          size=11, weight="semibold", color=INK)
+    label(ax, 8, 44.2, "column: one value per partition", size=9.5, color=INK2)
+    columns(8, 40, packed=False)
+    arrow(ax, 2.6, 42.5, 2.6, 32.8, color=MUTED, lw=1.2)
+    label(ax, 1.4, 37.6, "partitions", size=9, color=MUTED, rotation=90, ha="center")
+    arrow(ax, 27, 36.5, 34, 36.5)
+    label(ax, 37, 41.4, "row: each vector along one partition", size=9.5, color=INK2)
+    seq = []
+    for v, c in vec:
+        seq += [(v, i, c) for i in range(3)] + [None]
+    xe = row(37, 35.3, seq)
+    arrow(ax, 37, 33.6, xe - 1, 33.6, color=MUTED, lw=1.2)
+    label(ax, 37, 31.9, "free axis: A is read as 128 values in a row, stride 1", size=9, color=MUTED, va="top")
+    # after: pack inside each partition, then one descriptor per partition
+    label(ax, 1, 25.5, "After: pack each partition first, then one descriptor per partition (128)",
+          size=11, weight="semibold", color=INK)
+    columns(8, 18.5, packed=False)
+    arrow(ax, 27, 15, 35, 15)
+    label(ax, 31, 17.4, "4 CASTs:\ncopy within\neach partition", size=8.5, ha="center", va="bottom")
+    label(ax, 40, 22.2, "8 bytes per partition", size=9.5, color=INK2)
+    columns(40, 18.5, packed=True)
+    arrow(ax, 52.5, 15, 59, 15)
+    label(ax, 55.7, 16.8, "one DMA", size=8.5, ha="center")
+    label(ax, 62, 17.6, "interleaved row in partition 0", size=9.5, color=INK2)
+    seq = [(v, i, c) for i in range(3) for v, c in vec] + [None]
+    row(62, 13.8, seq, hi="A")
+    label(ax, 62, 12.1, "A is read with stride 4 (A0, A1, A2, ...)", size=9, color=MUTED, va="top")
     save(fig, "fig16_step5_pack.png")
 
 

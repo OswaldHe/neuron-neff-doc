@@ -128,16 +128,14 @@ def waterfall():
         if i:
             txt += f"\n{med[0] / med[i]:.2f}x"
         ax.text(i, med[i] + max(hi[i], 2) + 3, txt, ha="center", va="bottom", fontsize=10.5, color=INK)
-    ticks = ["baseline", "1: DRAM\nround trips", "2: redundant\nDMAs", "3: re-host\nDMAs, stale\nwaits",
-             "4: DMA->\ncompute,\ntable loads", "5: fewer\ndescriptors,\ntable loads", "6: one gate",
-             "7: merge\ntile loads"]
+    ticks = ["baseline", "1: Reduce\nSBUF-HBM\nround trips", "2: Remove\nredundant\nDMAs",
+             "3: Balance\nDMAs from\nGPSIMD to\nScalar", "4: Fewer\nactivation-\ntable loads",
+             "5: Pack data\nfor SBUF\naccess", "6: Change a\nsemaphore\nwait", "7: Merge\nweight\nDMAs and\nreorder"]
     ax.set_xticks(x, ticks, fontsize=9.5)
     ax.set_ylabel("total_exec_time (µs)")
     ax.set_ylim(0, 262)
     ax.yaxis.grid(True, color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    ax.set_title("gdn_block_tkg latency after each iteration\n"
-                 "(median of 7 interleaved captures, whiskers min-max)")
     save(fig, "fig10_gdn_waterfall.png")
 
 
