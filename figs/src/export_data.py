@@ -69,6 +69,19 @@ for it in range(8):
                  "act_table_loads": int((k.opcode == "ACT_TABLE_LOAD").sum())})
 pd.DataFrame(busy).round(3).to_csv(os.path.join(DATA, "gdn_engine_busy.csv"), index=False)
 
+# 2b. roofline inputs: Tensor Engine FLOPs and HBM bytes per NEFF, per-NeuronCore peaks
+roof = {}
+for it in range(8):
+    s = pd.read_parquet(f"{pq}/iter{it}/Summary.parquet").iloc[0]
+    roof[f"iter{it}"] = {"tensor_flops": float(s.hardware_flops),
+                         "hbm_bytes": float(s.hbm_read_bytes + s.hbm_write_bytes),
+                         "io_bytes": float(s.inputs_outputs_weights_size_bytes)}
+m = pd.read_parquet(f"{pq}/iter0/Metadata.parquet").iloc[0]
+roof["peak"] = {"dma_bytes_per_s": float(m.dma_ddr_bandwidth),
+                "tensor_flops_per_s": float(m.tensor_engine_num_rows * m.tensor_engine_num_cols * 2
+                                            * m.tensor_engine_clock_freq * 1e9)}
+json.dump(roof, open(os.path.join(DATA, "gdn_roofline.json"), "w"), indent=1)
+
 # 3. every DGE DMA: issue cost; completion latency where the semaphore is DMA-only
 rows = []
 for it in range(8):

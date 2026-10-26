@@ -6,6 +6,7 @@ import os
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 from matplotlib.patches import Patch
 
 from diagram import arrow, box, canvas, label
@@ -26,30 +27,24 @@ def save(fig, name):
 
 
 def gdn_kernel():
-    fig, ax = canvas(10, 3.55, 118)
-    y, h, w = 15, 11, 17
-    st = [(1, "in_proj\n4 matmul groups\n(Tensor Engine)", "hidden x W_qkv, W_z,\nW_a, W_b", BLUE),
-          (27, "conv1d decode\nwindow 4 + silu", "nested kernel\ngdn_conv1d_decode", VIOLET),
-          (53, "split + GQA\nrepeat q, k, v, z", "per-v-head\nrow copies", BLUE),
-          (79, "gdn_tkg\nrecurrence", "nested kernel: l2norm, gates,\n128x128 state update,\nRMSNormGated",
-           VIOLET)]
+    fig, ax = canvas(10, 2.45, 118)
+    y, h, w = 16, 11, 16
+    st = [(1, "Input\nprojections\n(4 matmuls)", "", BLUE),
+          (27, "Convolution\n(window 4)\n+ SiLU", "", VIOLET),
+          (53, "Split by head,\nrepeat query\nand key heads", "", BLUE),
+          (79, "Gated delta rule\n(one recurrent\nstep per head)",
+           "", VIOLET)]
     for x, t, sub, c in st:
-        box(ax, x, y, w, h, t, fc=TINT[c], ec=c, size=10.5, weight="semibold")
-        label(ax, x + w / 2, y - 1.4, sub, size=9.5, ha="center", va="top")
-    for x, n in ((18, "mixed"), (44, "conv_out"), (70, "q, k,\nv, z")):
-        arrow(ax, x + 0.3, y + 3.5, x + 8.7, y + 3.5, color=ORANGE, lw=1.6)
-        box(ax, x + 0.75, y + 5.2, 7.5, 5.3, n, fc=TINT[ORANGE], ec=ORANGE, size=9.5, radius=0.5)
-    box(ax, 101, y, 16, h, "outputs\ncore_out [1,1,512]\nconv_state', state'", fc=LIGHT_GRAY,
-        ec=AXIS, size=9.5)
-    arrow(ax, 96.3, y + h / 2, 100.7, y + h / 2)
-    label(ax, 1, 33.4, "gdn_block_tkg: Qwen3.5-style Gated DeltaNet decode (one token)", size=11.5,
-          color=INK, weight="semibold")
-    label(ax, 1, 29.9, "hidden 128, 2 k-heads -> 4 v-heads, head dim 128, bf16 / fp32 state", size=10.5,
-          color=INK2)
-    box(ax, 1, 0.5, 116, 6.2, "", fc=SURFACE, ec=ORANGE, style=(0, (3, 2)))
-    label(ax, 2.5, 3.6, "orange = HBM tensors handing data between the composed kernels (nl.shared_hbm). "
-          "In the NEFF they become\nten small DRAM 'tmp-buf' variables: values go SBUF -> DRAM -> SBUF.",
-          size=10, color=INK2)
+        box(ax, x, y, w, h, t, fc=TINT[c], ec=c, size=11, weight="semibold")
+        if sub:
+            label(ax, x + w / 2, y - 1.3, sub, size=10.5, ha="center", va="top")
+    for x, n in ((17, "query,\nkey, value"), (43, "conv\noutput"), (69, "per-head\ninputs")):
+        arrow(ax, x + 0.3, y + 3.5, x + 9.7, y + 3.5, color=ORANGE, lw=1.6)
+        box(ax, x + 0.35, y + 5.2, 9.3, 5.6, n, fc=TINT[ORANGE], ec=ORANGE, size=10, radius=0.5)
+    box(ax, 101, y, 16, h, "output\n+ updated\nstates", fc=LIGHT_GRAY, ec=AXIS, size=11)
+    arrow(ax, 95.3, y + h / 2, 100.7, y + h / 2)
+    label(ax, 1, 12.6, "Config: batch 1, one token, hidden size 128, 2 key heads repeated to 4 value heads, "
+          "head dim 128, bf16 weights and activations, fp32 state", size=10.5, color=INK2)
     save(fig, "fig07_gdn_kernel.png")
 
 
@@ -81,7 +76,7 @@ def step1():
           "reader, copy the\nwriter's source (PSEUDO_DMA_DIRECT2D bytes 16-63 / SP0.json descriptors). Every "
           "semaphore and wait stays\nas the compiler emitted it, so the change cannot break synchronisation. "
           "6 buffers, outputs bit-identical.", size=10, color=INK2, va="top")
-    save(fig, "fig11b_step1_roundtrip.png")
+    save(fig, "fig12b_step1_roundtrip.png")
 
 
 def step2():
@@ -102,22 +97,28 @@ def step2():
           "enum, but the compiler\nnever emits it; the compiled kernels only use '+1 on completion' (mode 19). "
           "Trap: the wait threshold and the\nadd amount share one 4-byte value field.", size=10, color=INK2,
           va="top")
-    save(fig, "fig12b_step2_sem_add.png")
+    save(fig, "fig13b_step2_sem_add.png")
 
 
 def step3():
     fig, axes = plt.subplots(2, 1, figsize=(9, 4.3), sharex=True)
     rows = [("Scalar", "Scalar Engine"), ("GpSimd", "GPSIMD Engine"), ("Sync", "Sync Engine")]
-    draw_timeline(axes[0], 2, 36, rows=rows, dma=False)
-    draw_timeline(axes[1], 3, 36, rows=rows, dma=False)
-    axes[0].set_title("Before (iter 2): the GPSIMD Engine issues 25 weight-load DMAs back to back,\n"
-                      "while the Scalar Engine waits", fontsize=11)
-    axes[1].set_title("After (iter 3): 8 of them issued from the Scalar Engine's 8 unused DGE queues;\n"
-                      "the GPSIMD Engine keeps a cheap relay", fontsize=11)
+    end = {}
+    for ax, it in zip(axes, (2, 3)):
+        draw_timeline(ax, it, 88, rows=rows, dma=False)
+        t = pd.read_csv(os.path.join(DATA, f"timeline_iter{it}.csv"))
+        end[it] = t.e_us.max()
+        ax.axvline(end[it], color=INK, lw=1.4, ls=(0, (4, 2)))
+        ax.text(end[it] + 0.6, 0.5, f"ends at\n{end[it]:.1f} µs", transform=ax.get_xaxis_transform(),
+                va="center", fontsize=10, color=INK)
+    axes[0].set_title("Before (iter 2): the GPSIMD Engine issues 25 weight-load DMAs back to back at the start",
+                      fontsize=11)
+    axes[1].set_title(f"After (iter 3): 8 of them move to the Scalar Engine's unused DMA queues; "
+                      f"the kernel ends {end[2] - end[3]:.1f} µs earlier", fontsize=11)
     axes[1].set_xlabel("time since the kernel's first instruction (µs)")
     fig.subplots_adjust(hspace=0.55)
     legend(fig, 0.0, classes=[c for c in __import__("fig_data").CLASSES[:4]])
-    save(fig, "fig13_step3_queues.png")
+    save(fig, "fig14_step3_queues.png")
 
 
 def step4():
@@ -151,7 +152,7 @@ def step4():
     label(ax, 1, 5.6, "Illustrative sequence (not slot-exact). Tail loads went 4,2,4,2,4,2,4 -> 4,2,4; kernel "
           "total 13 -> 7.\nNo set holds both silu and rsqrt, so 5 loads is the floor.", size=10, color=INK2,
           va="top")
-    save(fig, "fig14_step4_tables.png")
+    save(fig, "fig15_step4_tables.png")
 
 
 def step5():
@@ -191,7 +192,7 @@ def step5():
           "tiny transpose\ndescriptors serially (~8-15 ns each), so in that window only removing descriptors "
           "helped: three edits\nthat merely started transfers earlier were correct and lost time.", size=10,
           color=INK2, va="top")
-    save(fig, "fig15_step5_pack.png")
+    save(fig, "fig16_step5_pack.png")
 
 
 def step6():
@@ -223,7 +224,7 @@ def step6():
     ax.tick_params(axis="y", length=0)
     ax.spines["left"].set_visible(False)
     ax.set_title("One byte: Scalar Engine slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'")
-    save(fig, "fig16_step6_gate.png")
+    save(fig, "fig17_step6_gate.png")
 
 
 def step7():
@@ -243,7 +244,7 @@ def step7():
     ax.set_xlabel("engine time to issue (µs), cost model fitted on the profiles")
     ax.set_title("Merging tile loads buys issue time; then split again along the consumer\n"
                  "boundary (4 + 4 tiles)")
-    save(fig, "fig17_step7_merge.png")
+    save(fig, "fig18_step7_merge.png")
 
 
 def attribution():
@@ -291,7 +292,7 @@ def attribution():
     a1.set_ylim(0, 25)
     a1.legend(handles=[Patch(facecolor=c, label=l) for l, c in CAT.values()], loc="upper right",
               fontsize=10, handlelength=1.2)
-    save(fig, "fig20_attribution.png")
+    save(fig, "fig21_attribution.png")
     return {k: (round(tot1[k], 1), round(tot2[k], 1)) for k in CAT}
 
 

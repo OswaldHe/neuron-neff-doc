@@ -1,0 +1,46 @@
+{
+ "iter0": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 976736.0,
+  "io_bytes": 954144.0
+ },
+ "iter1": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 956278.0,
+  "io_bytes": 954144.0
+ },
+ "iter2": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 956266.0,
+  "io_bytes": 954144.0
+ },
+ "iter3": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 956266.0,
+  "io_bytes": 954144.0
+ },
+ "iter4": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 954172.0,
+  "io_bytes": 954144.0
+ },
+ "iter5": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 955208.0,
+  "io_bytes": 954144.0
+ },
+ "iter6": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 955208.0,
+  "io_bytes": 954144.0
+ },
+ "iter7": {
+  "tensor_flops": 790528.0,
+  "hbm_bytes": 955208.0,
+  "io_bytes": 954144.0
+ },
+ "peak": {
+  "dma_bytes_per_s": 434999984128.0,
+  "tensor_flops_per_s": 78643203125000.0
+ }
+}

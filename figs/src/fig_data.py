@@ -92,7 +92,7 @@ def timeline_pair():
     axes[1].set_xlabel("time since the kernel's first instruction (µs); one profiled execution")
     fig.subplots_adjust(hspace=0.35)
     legend(fig, 0.035, ncol=3)
-    save(fig, "fig10_gdn_timeline.png")
+    save(fig, "fig11_gdn_timeline.png")
 
 
 def timelines_all():
@@ -138,7 +138,7 @@ def waterfall():
     ax.set_axisbelow(True)
     ax.set_title("gdn_block_tkg latency after each iteration\n"
                  "(median of 7 interleaved captures, whiskers min-max)")
-    save(fig, "fig09_gdn_waterfall.png")
+    save(fig, "fig10_gdn_waterfall.png")
 
 
 def dma_latency():
@@ -174,7 +174,7 @@ def dma_latency():
     ax.set_xlim(0, 48)
     ax.set_title("Narrow writes into DRAM report completion ~10x later than loads\n"
                  "(every DGE DMA of the baseline)")
-    save(fig, "fig11a_dma_latency.png")
+    save(fig, "fig12a_dma_latency.png")
 
 
 def issue_cost():
@@ -202,7 +202,7 @@ def issue_cost():
     ax.legend(title="issuing engine", loc="lower right", title_fontsize=10.5)
     ax.set_title("A DGE DMA costs ~0.6 µs of engine time, almost\nregardless of size "
                  f"(all {len(d)} issues, 8 profiles)")
-    save(fig, "fig12a_dge_issue_cost.png")
+    save(fig, "fig13a_dge_issue_cost.png")
     return a, b
 
 
@@ -224,11 +224,74 @@ def speedups():
     ax.legend(handles=[Patch(facecolor=BLUE, label="Gated DeltaNet (nkilib experimental/gdn)"),
                        Patch(facecolor=VIOLET, label="Mamba scans (nkilib experimental/scan)")],
               loc="lower right")
-    save(fig, "fig21_speedups.png")
+    save(fig, "fig23_speedups.png")
+
+
+def roofline(keys=("iter0",), out="fig08_roofline.png", ceilings=False):
+    """Roofline for one LNC. keys: which NEFFs to plot; ceilings: add the per-engine busy-time caps."""
+    r = json.load(open(os.path.join(DATA, "gdn_roofline.json")))
+    bw, peak = r["peak"]["dma_bytes_per_s"], r["peak"]["tensor_flops_per_s"]
+    lt = {k: v["median_us"] for k, v in lat().items()}
+    fig, ax = plt.subplots(figsize=(8.2, 4.6))
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(0.1, 1000)
+    ax.set_ylim(1e9, 3e14)
+    x = np.logspace(-1, 3, 200)
+    ax.plot(x, np.minimum(x * bw, peak), color=INK2, lw=2)
+    fig.canvas.draw()
+    (u0, v0), (u1, v1) = ax.transData.transform([(0.2, 0.2 * bw), (20, 20 * bw)])
+    ang = np.degrees(np.arctan2(v1 - v0, u1 - u0))
+    ax.text(2.2, 2.2 * bw * 1.6, f"memory roof: {bw / 1e9:.0f} GB/s", rotation=ang,
+            rotation_mode="anchor", fontsize=10.5, color=INK2)
+    ax.text(14, peak * 1.3, f"Tensor Engine peak: {peak / 1e12:.1f} TFLOP/s", fontsize=10.5,
+            color=INK2)
+    name = {"iter0": ("baseline", MUTED), "iter7": ("optimized", BLUE)}
+    xy = {}
+    for key in keys:
+        ai = r[key]["tensor_flops"] / r[key]["hbm_bytes"]
+        perf = r[key]["tensor_flops"] / (lt[key] * 1e-6)
+        xy[key] = (ai, perf)
+        ax.scatter([ai], [perf], s=90, color=name[key][1], zorder=5, edgecolor="white", linewidth=1.5)
+        dy = 0.78 if (ceilings and key == "iter7") else 1.0
+        ax.text(ai * 1.35, perf * dy, f"{name[key][0]}: {lt[key]:.1f} µs, {perf / 1e9:.1f} GFLOP/s",
+                va="center", fontsize=10.5, color=INK)
+    if len(keys) == 2:
+        (x0, y0), (x1, y1) = xy[keys[0]], xy[keys[1]]
+        ax.annotate("", xy=(x1, y1 * 0.88), xytext=(x0, y0 * 1.12),
+                    arrowprops=dict(arrowstyle="-|>", color=BLUE, lw=1.6))
+    xt, yt = xy[keys[-1]]
+    roof = xt * bw
+    ax.plot([xt, xt], [yt * 1.15, roof * 0.87], color=INK2, lw=1.2, ls=(0, (3, 2)))
+    if ceilings:
+        ax.text(xt * 1.3, np.sqrt(yt * roof) * 1.15, f"{roof / yt:.0f}x below the roof", ha="left",
+                va="center", fontsize=10.5, color=INK2)
+    else:
+        ax.text(xt * 0.8, yt * 2.6, f"{roof / yt:.0f}x below\nthe roof", ha="right", va="center",
+                fontsize=10.5, color=INK2)
+    ax.scatter([xt], [roof], s=60, facecolor="white", edgecolor=INK2, zorder=5, linewidth=1.5)
+    ax.text(xt * 1.35, roof, f"memory roof at this intensity: {roof / 1e9:.0f} GFLOP/s", va="center",
+            fontsize=10.5, color=INK2)
+    if ceilings:  # the kernel cannot finish before its busiest engine: FLOPs / busy time
+        busy = pd.read_csv(os.path.join(DATA, "gdn_engine_busy.csv")).set_index("iter").loc[7]
+        flops = r["iter7"]["tensor_flops"]
+        for col, label_, c, ls in (("ACT", "Scalar Engine", ORANGE, "-"),
+                                   ("Pool", "Vector / GPSIMD Engine", VIOLET, (0, (4, 2)))):
+            cap = flops / (busy[col] * 1e-6)
+            ax.plot([0.1, 1000], [cap, cap], color=c, lw=1.8, ls=ls)
+            ax.text(1000, cap * 1.12, f"{label_} busy {busy[col]:.1f} µs: caps at {cap / 1e9:.0f} GFLOP/s",
+                    ha="right", va="bottom", fontsize=10, color=c)
+    ax.set_xlabel("Arithmetic Intensity (FLOPs/byte)")
+    ax.set_ylabel("Performance (FLOP/s)")
+    ax.grid(True, which="major", color=GRID, lw=0.6)
+    ax.set_axisbelow(True)
+    save(fig, out)
 
 
 if __name__ == "__main__":
     speedups()
+    roofline()
+    roofline(("iter0", "iter7"), "fig22_roofline_optimized.png", ceilings=True)
     waterfall()
     timeline_pair()
     timelines_all()
