@@ -16,8 +16,8 @@ from style import (AQUA, AXIS, BLUE, GREEN, GRID, INK, INK2, LIGHT_BLUE, LIGHT_G
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 TINT = {BLUE: LIGHT_BLUE, ORANGE: LIGHT_ORANGE, AQUA: "#d3f1e6", YELLOW: "#fbecc7",
         VIOLET: "#e2def8", MAGENTA: "#f9e2eb", GREEN: "#d2ead2", RED: "#f8d9d9", MUTED: LIGHT_GRAY}
-CAT = {"nki": ("expressible in NKI (by restructuring the source)", BLUE),
-       "indirect": ("NKI only indirectly (a coarse knob; the compiler decides)", VIOLET),
+CAT = {"easy": ("easy in NKI (a local change to the block's source)", BLUE),
+       "hard": ("hard in NKI (rewrite the reused kernels, or only indirectly)", VIOLET),
        "neff": ("NEFF-only (no NKI construct)", ORANGE)}
 
 
@@ -50,7 +50,7 @@ def gdn_kernel():
     label(ax, 2.5, 3.6, "orange = HBM tensors handing data between the composed kernels (nl.shared_hbm). "
           "In the NEFF they become\nten small DRAM 'tmp-buf' variables: values go SBUF -> DRAM -> SBUF.",
           size=10, color=INK2)
-    save(fig, "fig08_gdn_kernel.png")
+    save(fig, "fig07_gdn_kernel.png")
 
 
 def step1():
@@ -81,7 +81,7 @@ def step1():
           "reader, copy the\nwriter's source (PSEUDO_DMA_DIRECT2D bytes 16-63 / SP0.json descriptors). Every "
           "semaphore and wait stays\nas the compiler emitted it, so the change cannot break synchronisation. "
           "6 buffers, outputs bit-identical.", size=10, color=INK2, va="top")
-    save(fig, "fig12b_step1_roundtrip.png")
+    save(fig, "fig11b_step1_roundtrip.png")
 
 
 def step2():
@@ -102,7 +102,7 @@ def step2():
           "enum, but the compiler\nnever emits it; the compiled kernels only use '+1 on completion' (mode 19). "
           "Trap: the wait threshold and the\nadd amount share one 4-byte value field.", size=10, color=INK2,
           va="top")
-    save(fig, "fig13b_step2_sem_add.png")
+    save(fig, "fig12b_step2_sem_add.png")
 
 
 def step3():
@@ -117,7 +117,7 @@ def step3():
     axes[1].set_xlabel("time since the kernel's first instruction (µs)")
     fig.subplots_adjust(hspace=0.55)
     legend(fig, 0.0, classes=[c for c in __import__("fig_data").CLASSES[:4]])
-    save(fig, "fig14_step3_queues.png")
+    save(fig, "fig13_step3_queues.png")
 
 
 def step4():
@@ -151,7 +151,7 @@ def step4():
     label(ax, 1, 5.6, "Illustrative sequence (not slot-exact). Tail loads went 4,2,4,2,4,2,4 -> 4,2,4; kernel "
           "total 13 -> 7.\nNo set holds both silu and rsqrt, so 5 loads is the floor.", size=10, color=INK2,
           va="top")
-    save(fig, "fig15_step4_tables.png")
+    save(fig, "fig14_step4_tables.png")
 
 
 def step5():
@@ -191,7 +191,7 @@ def step5():
           "tiny transpose\ndescriptors serially (~8-15 ns each), so in that window only removing descriptors "
           "helped: three edits\nthat merely started transfers earlier were correct and lost time.", size=10,
           color=INK2, va="top")
-    save(fig, "fig16_step5_pack.png")
+    save(fig, "fig15_step5_pack.png")
 
 
 def step6():
@@ -223,7 +223,7 @@ def step6():
     ax.tick_params(axis="y", length=0)
     ax.spines["left"].set_visible(False)
     ax.set_title("One byte: Scalar Engine slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'")
-    save(fig, "fig17_step6_gate.png")
+    save(fig, "fig16_step6_gate.png")
 
 
 def step7():
@@ -243,7 +243,7 @@ def step7():
     ax.set_xlabel("engine time to issue (µs), cost model fitted on the profiles")
     ax.set_title("Merging tile loads buys issue time; then split again along the consumer\n"
                  "boundary (4 + 4 tiles)")
-    save(fig, "fig18_step7_merge.png")
+    save(fig, "fig17_step7_merge.png")
 
 
 def attribution():
@@ -287,11 +287,11 @@ def attribution():
     a1.set_xticks(xs, [f"step {i}" for i in xs])
     a1.yaxis.grid(True, color=GRID, lw=0.6)
     a1.set_axisbelow(True)
-    a1.set_title("Steps 2-7 by lever type: 22.5 of 51 µs\nneeded a non-NKI lever")
+    a1.set_title(f"Steps 2-7: only {tot2['easy']:.1f} of {sum(tot2.values()):.0f} µs\nwas an easy NKI change")
     a1.set_ylim(0, 25)
     a1.legend(handles=[Patch(facecolor=c, label=l) for l, c in CAT.values()], loc="upper right",
               fontsize=10, handlelength=1.2)
-    save(fig, "fig22_attribution.png")
+    save(fig, "fig20_attribution.png")
     return {k: (round(tot1[k], 1), round(tot2[k], 1)) for k in CAT}
 
 

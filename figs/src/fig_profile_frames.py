@@ -119,13 +119,13 @@ def draw(key, out, title):
 
 
 if __name__ == "__main__":
-    draw("iter0", "fig09_profile_baseline_framed.png",
+    draw("iter0", "fig08_profile_baseline_framed.png",
          "Baseline (217.5 µs): what each step fixes - numbers are the optimization steps")
-    draw("iter7", "fig19_profile_optimized_framed.png",
+    draw("iter7", "fig18_profile_optimized_framed.png",
          "Optimized (44.4 µs): where each step shows up in the trace")
 
 
-def utilization(out="fig20_profile_utilization.png"):
+def utilization(out="fig19_profile_utilization.png"):
     """Your neuron-explorer DMA- and FLOPs-utilization panels, baseline | optimized."""
     from PIL import ImageDraw, ImageFont
     panels = [["gdn_iter0_dma.png", "gdn_iter7_dma.png"],

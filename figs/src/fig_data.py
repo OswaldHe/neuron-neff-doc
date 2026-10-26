@@ -92,7 +92,7 @@ def timeline_pair():
     axes[1].set_xlabel("time since the kernel's first instruction (µs); one profiled execution")
     fig.subplots_adjust(hspace=0.35)
     legend(fig, 0.035, ncol=3)
-    save(fig, "fig11_gdn_timeline.png")
+    save(fig, "fig10_gdn_timeline.png")
 
 
 def timelines_all():
@@ -109,7 +109,7 @@ def timelines_all():
     axes[-1].set_xlabel("time (µs); rows top to bottom: Tensor, Vector, Scalar, GPSIMD, Sync Engine, DMA")
     fig.subplots_adjust(hspace=0.62)
     legend(fig, 0.068, ncol=3)
-    save(fig, "fig21_gdn_timelines_all.png")
+    save(fig, "gdn_timelines_all_detail.png")
 
 
 def waterfall():
@@ -138,7 +138,7 @@ def waterfall():
     ax.set_axisbelow(True)
     ax.set_title("gdn_block_tkg latency after each iteration\n"
                  "(median of 7 interleaved captures, whiskers min-max)")
-    save(fig, "fig10_gdn_waterfall.png")
+    save(fig, "fig09_gdn_waterfall.png")
 
 
 def dma_latency():
@@ -174,7 +174,7 @@ def dma_latency():
     ax.set_xlim(0, 48)
     ax.set_title("Narrow writes into DRAM report completion ~10x later than loads\n"
                  "(every DGE DMA of the baseline)")
-    save(fig, "fig12a_dma_latency.png")
+    save(fig, "fig11a_dma_latency.png")
 
 
 def issue_cost():
@@ -202,7 +202,7 @@ def issue_cost():
     ax.legend(title="issuing engine", loc="lower right", title_fontsize=10.5)
     ax.set_title("A DGE DMA costs ~0.6 µs of engine time, almost\nregardless of size "
                  f"(all {len(d)} issues, 8 profiles)")
-    save(fig, "fig13a_dge_issue_cost.png")
+    save(fig, "fig12a_dge_issue_cost.png")
     return a, b
 
 
@@ -224,7 +224,7 @@ def speedups():
     ax.legend(handles=[Patch(facecolor=BLUE, label="Gated DeltaNet (nkilib experimental/gdn)"),
                        Patch(facecolor=VIOLET, label="Mamba scans (nkilib experimental/scan)")],
               loc="lower right")
-    save(fig, "fig07_speedups.png")
+    save(fig, "fig21_speedups.png")
 
 
 if __name__ == "__main__":
