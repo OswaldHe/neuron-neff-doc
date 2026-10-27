@@ -17,8 +17,8 @@ from style import (AQUA, AXIS, BLUE, GREEN, GRID, INK, INK2, LIGHT_BLUE, LIGHT_G
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 TINT = {BLUE: LIGHT_BLUE, ORANGE: LIGHT_ORANGE, AQUA: "#d3f1e6", YELLOW: "#fbecc7",
         VIOLET: "#e2def8", MAGENTA: "#f9e2eb", GREEN: "#d2ead2", RED: "#f8d9d9", MUTED: LIGHT_GRAY}
-CAT = {"easy": ("easy in NKI (a local change to the block's source)", BLUE),
-       "hard": ("hard in NKI (rewrite the reused kernels, or only indirectly)", VIOLET),
+CAT = {"nki": ("achievable in NKI", BLUE),
+       "hard": ("hard in NKI", VIOLET),
        "neff": ("NEFF-only (no NKI construct)", ORANGE)}
 
 
@@ -45,7 +45,7 @@ def gdn_kernel():
     arrow(ax, 95.3, y + h / 2, 100.7, y + h / 2)
     label(ax, 1, 12.6, "Config: batch 1, one token, hidden size 128, 2 key heads repeated to 4 value heads, "
           "head dim 128, bf16 weights and activations, fp32 state", size=10.5, color=INK2)
-    save(fig, "fig07_gdn_kernel.png")
+    save(fig, "fig06_gdn_kernel.png")
 
 
 def step1():
@@ -76,7 +76,7 @@ def step1():
           "reader, copy the\nwriter's source (PSEUDO_DMA_DIRECT2D bytes 16-63 / SP0.json descriptors). Every "
           "semaphore and wait stays\nas the compiler emitted it, so the change cannot break synchronisation. "
           "6 buffers, outputs bit-identical.", size=10, color=INK2, va="top")
-    save(fig, "fig12b_step1_roundtrip.png")
+    save(fig, "step1_roundtrip_detail.png")
 
 
 def step2():
@@ -97,7 +97,7 @@ def step2():
           "enum, but the compiler\nnever emits it; the compiled kernels only use '+1 on completion' (mode 19). "
           "Trap: the wait threshold and the\nadd amount share one 4-byte value field.", size=10, color=INK2,
           va="top")
-    save(fig, "fig13b_step2_sem_add.png")
+    save(fig, "step2_sem_add_detail.png")
 
 
 def step3():
@@ -118,7 +118,7 @@ def step3():
     axes[1].set_xlabel("time since the kernel's first instruction (µs)")
     fig.subplots_adjust(hspace=0.55)
     legend(fig, 0.0, classes=[c for c in __import__("fig_data").CLASSES[:4]])
-    save(fig, "fig14_step3_queues.png")
+    save(fig, "fig10_step3_queues.png")
 
 
 def step4():
@@ -149,7 +149,7 @@ def step4():
                     (MUTED, "table-agnostic (square, copy, CAST)", 56)):
         box(ax, x, 8.2, 2.2, 3.2, "", fc=c, ec=c, radius=0.3)
         label(ax, x + 3.2, 9.8, n, size=10)
-    save(fig, "fig15_step4_tables.png")
+    save(fig, "fig11_step4_tables.png")
 
 
 def step5():
@@ -210,7 +210,7 @@ def step5():
     seq = [(v, i, c) for i in range(3) for v, c in vec] + [None]
     row(62, 13.8, seq, hi="A")
     label(ax, 62, 12.1, "A is read with stride 4 (A0, A1, A2, ...)", size=9, color=MUTED, va="top")
-    save(fig, "fig16_step5_pack.png")
+    save(fig, "fig12_step5_pack.png")
 
 
 def step6():
@@ -242,7 +242,7 @@ def step6():
     ax.tick_params(axis="y", length=0)
     ax.spines["left"].set_visible(False)
     ax.set_title("One byte: Scalar Engine slot 54 'wait S[28] >= 16' -> 'wait S[67] >= 16'")
-    save(fig, "fig17_step6_gate.png")
+    save(fig, "step6_gate_detail.png")
 
 
 def step7():
@@ -262,7 +262,7 @@ def step7():
     ax.set_xlabel("engine time to issue (µs), cost model fitted on the profiles")
     ax.set_title("Merging tile loads buys issue time; then split again along the consumer\n"
                  "boundary (4 + 4 tiles)")
-    save(fig, "fig18_step7_merge.png")
+    save(fig, "step7_merge_detail.png")
 
 
 def attribution():
@@ -294,7 +294,6 @@ def attribution():
     a0.set_ylabel("latency removed (µs)")
     a0.yaxis.grid(True, color=GRID, lw=0.6)
     a0.set_axisbelow(True)
-    a0.set_title("Where the 173 µs\ncame from")
     xs = np.arange(2, 8)
     b = np.zeros(6)
     for k, (_, c) in CAT.items():
@@ -306,11 +305,10 @@ def attribution():
     a1.set_xticks(xs, [f"step {i}" for i in xs])
     a1.yaxis.grid(True, color=GRID, lw=0.6)
     a1.set_axisbelow(True)
-    a1.set_title(f"Steps 2-7: only {tot2['easy']:.1f} of {sum(tot2.values()):.0f} µs\nwas an easy NKI change")
     a1.set_ylim(0, 25)
     a1.legend(handles=[Patch(facecolor=c, label=l) for l, c in CAT.values()], loc="upper right",
               fontsize=10, handlelength=1.2)
-    save(fig, "fig21_attribution.png")
+    save(fig, "fig15_attribution.png")
     return {k: (round(tot1[k], 1), round(tot2[k], 1)) for k in CAT}
 
 
@@ -342,7 +340,7 @@ def control_surface():
             box(ax, x, y - 1.75, 18.5, 3.5, val, fc=TINT.get(c, LIGHT_GRAY), ec=c, size=9.5, radius=0.4)
     label(ax, 0.8, 1.6, "* nkilib kernels are compiled with NKI's own allocation and scheduling; "
           "reused standalone kernels still take and return HBM tensors.", size=9.5, color=INK2)
-    save(fig, "fig06_control_surface.png")
+    save(fig, "control_surface_detail.png")
 
 
 if __name__ == "__main__":

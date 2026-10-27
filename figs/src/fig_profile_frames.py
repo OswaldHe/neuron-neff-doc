@@ -76,14 +76,14 @@ def badge(steps):
     return "".join(BADGE[s - 1] for s in steps)
 
 
-def draw(key, out, title):
+def draw(key, out, title, notes=True):
     cfg, frames = SHOTS[key], FRAMES[key]
     img = Image.open(os.path.join(FIGS, cfg["png"])).convert("RGB")
     W, H = img.size
-    items = sorted([f for f in frames if f[6]], key=lambda f: f[0])
+    items = sorted([f for f in frames if f[6]], key=lambda f: f[0]) if notes else []
     wrapped = [textwrap.wrap(f[6], 88) for f in items]
     line_h, gap = 60, 30
-    top = 110 if title else 30
+    top = (110 if notes else 80) if title else 30
     leg_h = top + sum(max(len(w) * line_h, 72) + gap for w in wrapped)
     dpi = 100
     fig = plt.figure(figsize=(W / dpi, (H + leg_h) / dpi), dpi=dpi, facecolor="#1b1d22")
@@ -119,13 +119,13 @@ def draw(key, out, title):
 
 
 if __name__ == "__main__":
-    draw("iter0", "fig09_profile_baseline_framed.png",
+    draw("iter0", "fig08_profile_baseline_framed.png",
          "")
-    draw("iter7", "fig19_profile_optimized_framed.png",
-         "Optimized (44.4 µs): where each step shows up in the trace")
+    draw("iter7", "fig13_profile_optimized_framed.png",
+         "The numbers correspond to the optimization steps.", notes=False)
 
 
-def utilization(out="fig20_profile_utilization.png"):
+def utilization(out="fig14_profile_utilization.png"):
     """Your neuron-explorer DMA- and FLOPs-utilization panels, baseline | optimized."""
     from PIL import ImageDraw, ImageFont
     panels = [["gdn_iter0_dma.png", "gdn_iter7_dma.png"],

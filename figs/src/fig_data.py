@@ -92,7 +92,7 @@ def timeline_pair():
     axes[1].set_xlabel("time since the kernel's first instruction (µs); one profiled execution")
     fig.subplots_adjust(hspace=0.35)
     legend(fig, 0.035, ncol=3)
-    save(fig, "fig11_gdn_timeline.png")
+    save(fig, "gdn_timeline_detail.png")
 
 
 def timelines_all():
@@ -136,7 +136,7 @@ def waterfall():
     ax.set_ylim(0, 262)
     ax.yaxis.grid(True, color=GRID, lw=0.6)
     ax.set_axisbelow(True)
-    save(fig, "fig10_gdn_waterfall.png")
+    save(fig, "fig09_gdn_waterfall.png")
 
 
 def dma_latency():
@@ -172,7 +172,7 @@ def dma_latency():
     ax.set_xlim(0, 48)
     ax.set_title("Narrow writes into DRAM report completion ~10x later than loads\n"
                  "(every DGE DMA of the baseline)")
-    save(fig, "fig12a_dma_latency.png")
+    save(fig, "dma_latency_detail.png")
 
 
 def issue_cost():
@@ -200,7 +200,7 @@ def issue_cost():
     ax.legend(title="issuing engine", loc="lower right", title_fontsize=10.5)
     ax.set_title("A DGE DMA costs ~0.6 µs of engine time, almost\nregardless of size "
                  f"(all {len(d)} issues, 8 profiles)")
-    save(fig, "fig13a_dge_issue_cost.png")
+    save(fig, "dge_issue_cost_detail.png")
     return a, b
 
 
@@ -222,10 +222,10 @@ def speedups():
     ax.legend(handles=[Patch(facecolor=BLUE, label="Gated DeltaNet (nkilib experimental/gdn)"),
                        Patch(facecolor=VIOLET, label="Mamba scans (nkilib experimental/scan)")],
               loc="lower right")
-    save(fig, "fig23_speedups.png")
+    save(fig, "fig17_speedups.png")
 
 
-def roofline(keys=("iter0",), out="fig08_roofline.png", ceilings=False):
+def roofline(keys=("iter0",), out="fig07_roofline.png", ceilings=False):
     """Roofline for one LNC. keys: which NEFFs to plot; ceilings: add the per-engine busy-time caps."""
     r = json.load(open(os.path.join(DATA, "gdn_roofline.json")))
     bw, peak = r["peak"]["dma_bytes_per_s"], r["peak"]["tensor_flops_per_s"]
@@ -289,7 +289,7 @@ def roofline(keys=("iter0",), out="fig08_roofline.png", ceilings=False):
 if __name__ == "__main__":
     speedups()
     roofline()
-    roofline(("iter0", "iter7"), "fig22_roofline_optimized.png", ceilings=True)
+    roofline(("iter0", "iter7"), "fig16_roofline_optimized.png", ceilings=True)
     waterfall()
     timeline_pair()
     timelines_all()

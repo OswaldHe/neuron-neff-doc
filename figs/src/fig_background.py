@@ -183,16 +183,17 @@ def semaphores():
     # Scalar Engine waits
     box(ax, 41, 30, 16, 6, "EVENT_SEMAPHORE\nwait S[13] >= 16", fc=LIGHT_GRAY, ec=AXIS, **mono)
     arrow(ax, 44, 42, 48, 36.2, color=ORANGE)
-    box(ax, 58.5, 30, 12, 6, "ACTIVATE\nS[4]++", fc=LIGHT_BLUE, ec=BLUE, **mono)
-    box(ax, 72, 30, 12, 6, "ACTIVATE\nS[4]++", fc=LIGHT_BLUE, ec=BLUE, **mono)
+    box(ax, 58.5, 30, 12, 6, "ACTIVATE\nS[4] += 1", fc=LIGHT_BLUE, ec=BLUE, **mono)
+    box(ax, 72, 30, 12, 6, "ACTIVATE\nS[4] += 1", fc=LIGHT_BLUE, ec=BLUE, **mono)
     # Vector Engine waits on S[4] >= 2
-    box(ax, 82, 19, 16.5, 6, "TENSOR_TENSOR\nwait S[4] >= 2", fc=LIGHT_BLUE, ec=BLUE, **mono)
-    arrow(ax, 80, 29.8, 86, 25.2, color=BLUE)
-    label(ax, 79, 26.5, "the 2nd Scalar\nEngine completion", size=9.5, ha="right")
+    box(ax, 82, 18.5, 16.5, 7, "TENSOR_TENSOR\nwait S[4] >= 2\nS[6] += 1", fc=LIGHT_BLUE, ec=BLUE, **mono)
+    arrow(ax, 80, 29.8, 86, 25.7, color=BLUE)
+    label(ax, 79.5, 27.2, "S[4] += 1", size=10, color=BLUE, weight="bold", family="monospace", ha="right")
+    label(ax, 79.5, 25.0, "(2nd Scalar Engine completion)", size=9, ha="right")
     # Sync Engine trigger waits on S[6]
-    box(ax, 82, 8, 16.5, 6, "DMATRIGGER\nwait S[6] >= 1", fc=LIGHT_ORANGE, ec=ORANGE, **mono)
-    arrow(ax, 90.25, 18.8, 90.25, 14.2, color=BLUE)
-    label(ax, 89, 16.5, "S[6]++", size=9.5, ha="right", family="monospace")
+    box(ax, 82, 8, 16.5, 6, "DMA trigger\nwait S[6] >= 1", fc=LIGHT_ORANGE, ec=ORANGE, **mono)
+    arrow(ax, 90.25, 18.3, 90.25, 14.2, color=BLUE)
+    label(ax, 89, 16.3, "S[6] += 1", size=10, color=BLUE, weight="bold", family="monospace", ha="right")
     label(ax, 0.5, 57.5, "A wait counts producers since the start of the kernel, never a delta: 'S[4] >= 2' "
           "means\nthe 2nd Scalar Engine instruction that signals S[4] has finished.", size=10.5,
           color=INK2, va="top")
