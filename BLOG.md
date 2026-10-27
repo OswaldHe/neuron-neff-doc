@@ -8,6 +8,28 @@
 - **NKI is not enough for performance optimization.** Engineers can use NKI to control how the computations are implemented: which operator should be on which engine. However, the compiler decides how the engines coordinate. The schedule can be suboptimal, even with the recent Neuron SDK 2.32. Semaphore waits, DMA queue assignment and activation-table loads are out of NKI's reach but editable in the NEFF. Even for optimizations that are reachable from NKI, operating directly on NEFF can relief the burden of investigating the compiler behavior on NKI maps to NEFF.
 - **NEFF-based optimization speeds up a GDN kernel by 4.9x.** With the same parallelization constraints, editing only the compiled NEFF of nkilib's Gated DeltaNet decode block took it from 217.5 us to 44.4 us. The gains came from optimizing data movement and synchronization at the NEFF level. The same method improves the performance of Mamba and Selective Scan nkilib kernels by 1.05x–2.52x.
 
+#### Table of Contents
+
+- [Introduction: Trainium, NKI, Neuron Compiler, and NEFF](#introduction-trainium-nki-neuron-compiler-and-neff)
+- [NEFF Container Structure and Metadata](#neff-container-structure-and-metadata)
+- [Instruction and Pseudo Instruction](#instruction-and-pseudo-instruction)
+- [Memory Management and DMA](#memory-management-and-dma)
+- [Synchronization](#synchronization)
+- [What can we do in NEFF but not NKI?](#what-can-we-do-in-neff-but-not-nki)
+- [What should we modify for better performance](#what-should-we-modify-for-better-performance)
+- [Case Study: Optimize Gated DeltaNet (GDN) in NKI Library](#case-study-optimize-gated-deltanet-gdn-in-nki-library)
+  - [Step 1: Reduce the SBUF-HBM round trips for data access](#step-1-reduce-the-sbuf-hbm-round-trips-for-data-access-2175-µs-to-954-µs-228x)
+  - [Step 2: Remove DMAs that are duplicated or only signal completion](#step-2-remove-dmas-that-are-duplicated-or-only-signal-completion-954-µs-to-832-µs-115x)
+  - [Step 3: Balance DGE DMAs from the GPSIMD Engine onto the Scalar Engine's idle queues](#step-3-balance-dge-dmas-from-the-gpsimd-engine-onto-the-scalar-engines-idle-queues-832-µs-to-750-µs-111x)
+  - [Step 4: Reduce activation-table loading](#step-4-reduce-activation-table-loading-750-µs-to-600-µs-125x)
+  - [Step 5: Data packing for aggregated SBUF access](#step-5-data-packing-for-aggregated-sbuf-access-600-µs-to-510-µs-118x)
+  - [Step 6: Modify the semaphore wait condition in the Scalar Engine](#step-6-modify-the-semaphore-wait-condition-in-the-scalar-engine-510-µs-to-477-µs-107x)
+  - [Step 7: Merge the DMAs for projection weights and reorder instructions](#step-7-merge-the-dmas-for-projection-weights-and-reorder-instructions-477-µs-to-444-µs-107x)
+  - [Profile of Optimized NEFF](#profile-of-optimized-neff)
+  - [Contribution of NEFF-only and NEFF-friendly optimizations](#contribution-of-neff-only-vs-neff-friendly-optimizations)
+- [What still limits the optimized kernel](#what-still-limits-the-optimized-kernel)
+- [Generalizing to other kernels](#generalizing-to-other-kernels)
+
 ---
 
 ### Introduction: Trainium, NKI, Neuron Compiler, and NEFF
@@ -371,7 +393,7 @@ Figure 14 compares neuron-explorer's utilization panels. In the baseline, each o
 ![Figure 14: DMA and FLOPs utilization before and after](figs/fig14_profile_utilization.png)
 *Figure 14. neuron-explorer's DMA utilization (per DMA engine) and FLOPs utilization (per compute engine). Left: baseline. Right: optimized.*
 
-#### Contribution of NEFF-only vs. NEFF-friendly optimizations
+#### Contribution of NEFF-only and NEFF-friendly optimizations
 
 To analyze the contributions of speedup that are from NEFF-only optimization, NEFF-friendly optimization (optimization difficulty to achieve in NKI), and NKI achievable optimizations, Figure 15 shows how much latency each kind removed, using the per-edit measurements from the optimization loop, scaled to the re-measured total of each step.
 
