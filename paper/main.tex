@@ -125,9 +125,9 @@ However, NKI does not expose everything underneath the compiler. NKI does not le
   \end{tabular}
 \end{table}
 
-This leaves real room for improvement. In a profile, the engines of an NKI kernel often sit idle for reasons the source does not show: an engine waiting on the wrong event, a transfer queued behind unrelated ones, a function table reloaded again and again. This motivate us to do NEFF-based performance optimization: directly modify the NEFF to manage the instructions and memory access for lower latency of certain computations. We evaluated on various kernels in NKI Library~\citep{nki_library}, AWS's open-source collection of optimized NKI kernels, and achieved 1.05$\times$ to 4.9$\times$ speedup (Figure~\ref{fig:speedups}). We will show a case study for Gated DeltaNet kernel, which is a core computation in Qwen 3.5 models.
+This leaves real room for improvement. In a profile, the engines of an NKI kernel often sit idle for reasons the source does not show: an engine waiting on the wrong event, a transfer queued behind unrelated ones, a function table reloaded again and again. This motivates us to do NEFF-based performance optimization: directly modify the NEFF to manage the instructions and memory access for lower latency of certain computations. We evaluated on various kernels in NKI Library~\citep{nki_library}, AWS's open-source collection of optimized NKI kernels, and achieved 1.05$\times$ to 4.9$\times$ speedup (Figure~\ref{fig:speedups}). We will show a case study for Gated DeltaNet kernel, which is a core computation in Qwen 3.5 models.
 
-Editting NEFF requires knowing what a NEFF contains. In the next section, we will start with illustrating the content of NEFF: how a NEFF is laid out on disk, and how to unpack, edit and repack it without the compiler.
+Editing a NEFF requires knowing what a NEFF contains. In the next section, we will start with illustrating the content of NEFF: how a NEFF is laid out on disk, and how to unpack, edit and repack it without the compiler.
 
 %=====================================================================
 \section{NEFF Container Structure and Metadata}
@@ -317,7 +317,7 @@ What makes DMAs expensive in small kernels is not the bytes they move but their 
     \toprule
     \textbf{Item} & \textbf{Cost} \\
     \midrule
-    issuing a DGE DMA & 1.3 \us \\
+    issuing a DGE DMA & 0.56\us + 0.74\,ns per descriptor of the issuing engine's time \\
     issuing a queued trigger & 0.09 $\sim$ 0.12\us \\
     completion of a queued DMA & $\sim$1.2\us \\
     completion of a DGE DMA & 1.3 $\sim$ 4\us \\
@@ -498,7 +498,7 @@ NKI has no API for table loads, so it can only reorder activations and hope that
 
 \subsection{Step 5: Data packing for aggregated SBUF access (60.0\texorpdfstring{\us}{ us} to 51.0\texorpdfstring{\us}{ us}, 1.18\texorpdfstring{$\times$}{x})}
 
-Four vectors for each head have to be transposed into rows of partition 0. The clearest case is the keys of the four heads. In the state update, each head computes \code{S += outer(k, delta)} on the Tensor Engine, as a separate matmul per head. The Tensor Engine sums over the partition axis of its inputs, so for an outer product, which sums over a single element, \code{k} and \code{delta} must both be rows in the same partition. \code{delta} is computed from the previous matmul, \code{kv = k\^{}T @ S}, whose result is a single row in partition 0, so every head's key must also be a row in partition 0. The kernel therefore keeps the four keys side by side in partition 0, each at its own offset. A detail explanation of how tensor engine works in Trainium is in Figure \ref{fig:systolic}. The DMA does this transpose with one descriptor per value, 512 in total, and processes them one at a time. We first use 4 \code{CAST} instructions, which here simply copy values within each partition, to place each partition's four values next to each other in 8 contiguous bytes. A single DMA of 128 descriptors, one 8-byte block per partition, then moves everything (Figure~\ref{fig:step5}). The four rows arrive interleaved, so instead of separating them again, the consumers read each vector with a stride of 4. Applied to two such transposes, this saved 4.2\us. Two more table loads were also removed, and the 9 queued DMAs for the output became one 1\,KB store.
+Four vectors for each head have to be transposed into rows of partition 0. The clearest case is the keys of the four heads. In the state update, each head computes \code{S += outer(k, delta)} on the Tensor Engine, as a separate matmul per head. The Tensor Engine sums over the partition axis of its inputs, so for an outer product, which sums over a single element, \code{k} and \code{delta} must both be rows in the same partition. \code{delta} is computed from the previous matmul, \code{kv = k\^{}T @ S}, whose result is a single row in partition 0, so every head's key must also be a row in partition 0. The kernel therefore keeps the four keys side by side in partition 0, each at its own offset. A detailed explanation of how the Tensor Engine works in Trainium is in Figure \ref{fig:systolic}. The DMA does this transpose with one descriptor per value, 512 in total, and processes them one at a time. We first use 4 \code{CAST} instructions, which here simply copy values within each partition, to place each partition's four values next to each other in 8 contiguous bytes. A single DMA of 128 descriptors, one 8-byte block per partition, then moves everything (Figure~\ref{fig:step5}). The four rows arrive interleaved, so instead of separating them again, the consumers read each vector with a stride of 4. Applied to two such transposes, this saved 4.2\us. Two more table loads were also removed, and the 9 queued DMAs for the output became one 1\,KB store.
 
 \begin{figure}[!htbp]
   \centering
@@ -510,7 +510,7 @@ Four vectors for each head have to be transposed into rows of partition 0. The c
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.9\linewidth]{fig12_step5_pack.png}
-  \caption{Transposing the four vectors (\code{k}) of each head to partition 0 in state update. In step 5, we reduce the number of descriptors to issue DMA by packing 4 heads' vectors together. When read the data back, each vector is accessed with a stride of 4.}
+  \caption{Transposing the four vectors (\code{k}) of each head to partition 0 in state update. In step 5, we reduce the number of descriptors to issue DMA by packing 4 heads' vectors together. When reading the data back, each vector is accessed with a stride of 4.}
   \label{fig:step5}
 \end{figure}
 
@@ -550,12 +550,12 @@ Figure~\ref{fig:util} compares Neuron Explorer's utilization panels. In the base
 
 \subsection{Contribution of NEFF-only and NEFF-friendly optimizations}
 
-To analyze how much of the speedup comes from NEFF-only optimizations, NEFF-friendly optimizations (those difficult to achieve in NKI), and optimizations achievable in NKI, Figure~\ref{fig:attr} shows how much latency each kind removed, using the per-edit measurements from the optimization loop, scaled to the re-measured total of each step. For NEFF-friendly optimizations, we include the updates that does not have directly NKI API support but can possibly achieved through trials and errors in different NKI writing styles. The NEFF-only optimizations removed 17.5\us, 40\% of the total 43.1\us saved. The NEFF-friendly optimizations removed 10.6\us, 25\% of the total. The remaining 15.0\us, 35\% of the total, could be achieved in NKI by a significant rewrite of the kernel.
+To analyze how much of the speedup comes from NEFF-only optimizations, NEFF-friendly optimizations (those difficult to achieve in NKI), and optimizations achievable in NKI, Figure~\ref{fig:attr} shows how much latency each kind removed, using the per-edit measurements from the optimization loop, scaled to the re-measured total of each step. For NEFF-friendly optimizations, we include the updates that do not have direct NKI API support but can possibly be achieved through trial and error with different NKI writing styles. The NEFF-only optimizations removed 17.5\us, 40\% of the total 43.1\us saved. The NEFF-friendly optimizations removed 10.6\us, 25\% of the total. The remaining 15.0\us, 35\% of the total, could be achieved in NKI by a significant rewrite of the kernel.
 
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.8\linewidth]{fig15_attribution.png}
-  \caption{Latency reduced by each step. Blue: achievable in NKI by significant code rewrite. Purple: hard in NKI, code rewrite may not help due to lack of exposure of the compiler. Orange: NEFF-only, NKI does not have success granularity of adjustment.}
+  \caption{Latency reduced by each step. Blue: achievable in NKI by significant code rewrite. Purple: hard in NKI, code rewrite may not help due to lack of exposure of the compiler. Orange: NEFF-only, NKI does not offer sufficient granularity of adjustment.}
   \label{fig:attr}
 \end{figure}
 
