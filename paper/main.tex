@@ -1,6 +1,7 @@
 \documentclass{article}
 
 % NeurIPS 2026 style, preprint mode (non-anonymous, "Preprint." footer)
+\PassOptionsToPackage{numbers}{natbib} % numeric citations to match \bibliographystyle{plain}
 \usepackage[preprint]{neurips_2026}
 
 \usepackage[utf8]{inputenc} % allow utf-8 input
@@ -52,7 +53,7 @@
 \newcolumntype{L}{>{\raggedright\arraybackslash}X}
 \newcommand{\repo}{https://github.com/OswaldHe/neuron-neff-doc/blob/main}
 
-\title{Accelerate Below Kernel Level: NEFF-based Performance Optimization on AWS Trainium}
+\title{Accelerating AWS Trainium Below Kernel Level: NEFF-based Performance Optimization}
 
 \author{%
   Zifan He, Jason Cong \\
@@ -65,11 +66,11 @@
 \maketitle
 
 \begin{abstract}
-The Neuron Executable File Format (NEFF) is the compiler artifact for AWS Trainium devices. Like SASS for NVIDIA GPUs, it holds the real instructions and their control information, and although it is not publicly documented, it is readable and modifiable. A NEFF is a header plus a tar archive with one program per NeuronCore: one instruction stream of 64-byte slots per engine, DMA descriptors, and a definition of memory and DMA queues, with the whole instruction schedule encoded by a sequence of semaphore waits and updates. Normally, the Neuron SDK for Trainium provides Neuron Kernel Interface (NKI) for optimized kernel deployment. In this work, we argue that NKI is not enough for performance optimization: NKI controls how computations are implemented and on which engine, but the compiler decides how the engines coordinate, and the resulting schedule can be suboptimal. Semaphore waits, DMA queue assignment and activation-table loads are out of NKI's reach but editable in the NEFF. Our experiment \footnote{\url{https://github.com/OswaldHe/neuron-neff-doc}} reveals that with the same parallelization constraints, editing only the NEFF for Gated DeltaNet decode block have achieved a 4.9$\times$ speedup compared to the NKI Library reference. The same method improves the performance of Mamba and selective-scan NKI Library kernels by 1.05$\times$ to 2.52$\times$. 
+The Neuron Executable File Format (NEFF) is the compiler artifact for AWS Trainium devices. Like SASS for NVIDIA GPUs, it holds the real instructions and their control information. Although it is not publicly documented, it is readable and modifiable. A NEFF contains a header plus a compressed archive expressing the target kernel and its metadata. This includes graph definitions, instruction streams for each engine, DMA queues, and semaphores to manage the synchronization between engines. Typically, developers utilize Neuron Kernel Interface (NKI) for optimized kernel deployment on Trainium. However, we argue that NKI is not enough for performance optimization: NKI controls how computations are implemented and on which engine, but the compiler decides how the engines coordinate, and the resulting schedule can be suboptimal. Semaphore waits, DMA queue assignment and activation-table loads are out of NKI's reach but editable in the NEFF. Our experiment \footnote{\url{https://github.com/OswaldHe/neuron-neff-doc}} reveals that with the same parallelization constraints, editing the NEFF for Gated DeltaNet decode block have achieved a 4.9$\times$ speedup compared to the NKI Library reference. The same method improves the performance of Mamba and selective-scan NKI Library kernels by 1.05$\times$ to 2.52$\times$. 
 \end{abstract}
 
 \begin{center}
-\fbox{\parbox{0.95\linewidth}{\small\textbf{Disclaimer:} Every conclusion and experiment in this paper comes from the Neuron SDK 2.32.0 toolchain and open-source AWS Neuron repositories, run and measured on a single trn2.3xlarge instance. Part of the information was inferred by reverse engineering, so treat all of it as reference only. It does not necessarily reflect how AWS implements things internally.}}
+\fbox{\parbox{0.95\linewidth}{\small\textbf{Disclaimer:} Every conclusion and experiment in this work comes from the Neuron SDK 2.32.0 toolchain and open-source AWS Neuron repositories, run and measured on a single trn2.3xlarge instance. Part of the information was inferred by reverse engineering how NKI maps to NEFF, so treat all of it as reference only. It does not necessarily reflect how AWS implements things internally.}}
 \end{center}
 
 \begin{figure}[ht]
@@ -87,14 +88,14 @@ The Neuron Executable File Format (NEFF) is the compiler artifact for AWS Traini
 \section{Introduction: Trainium, NKI, Neuron Compiler, and NEFF}
 \label{sec:intro}
 
-Although GPUs still run most AI training and inference, the largest cloud providers increasingly build their own accelerators. One example is \textbf{AWS Trainium}, a family of AI chips designed by Annapurna Labs. The key advantage of Trainium is its cost-efficiency. For example, Trainium~2 has 30--40\% better price performance than GPU-based P5e instances~\citep{aws_trn2}. As a result, big AI companies such as Anthropic train and serve their Claude models on Trainium~2 in Project Rainier~\citep{project_rainier}. Other customers AWS lists for Trainium include Databricks, OpenAI and Uber~\citep{aws_trainium}.
+Although GPUs still run most AI training and inference, the largest cloud providers increasingly build their own accelerators. One example is \textbf{AWS Trainium}, a family of AI chips designed by Annapurna Labs. The key advantage of Trainium is its cost-efficiency. For example, Trainium~2 has 30 to 40\% better price performance than GPU-based P5E instances (NVIDIA H200)~\citep{aws_trn2}. As a result, big AI companies such as Anthropic train and serve their Claude models on Trainium~2 in Project Rainier~\citep{project_rainier}. Other customers AWS lists for Trainium include Databricks, OpenAI and Uber~\citep{aws_trainium}.
 
-A Trainium2 device has eight compute cores called \textbf{NeuronCores}. They are grouped in 2-core chips, each assigned a dedicated HBM stack shared across the cores. Cores in a 2-core chip communicate through a die-to-die fast interconnect, and communication between chips is handled by NeuronLink. Unlike GPUs, the Trainium NeuronCore is a heterogeneous NPU: the \textbf{Tensor Engine} is a 128$\times$128 systolic array that computes matrix multiplications; the \textbf{Vector Engine} and \textbf{Scalar Engine} operate on vectors for vector and scalar operations, such as reductions and activation functions; and the \textbf{GPSIMD Engine} is a general-purpose SIMD core that can compute arbitrary operations, including DMA operations. Engines communicate through two types of SRAM: SBUF, used to store any intermediate data, and PSUM, which is dedicated to the accumulation buffer of the Tensor Engine. Additionally, there is a \textbf{Sync Engine} that handles synchronization between instructions.
+A Trainium 2 device has eight compute cores called \textbf{NeuronCores}. They are grouped in 2-core chips, each assigned a dedicated HBM stack shared across the cores. Cores in a 2-core chip communicate through a die-to-die fast interconnect, and communication between chips is handled by NeuronLink. Unlike GPUs, the Trainium NeuronCore is a heterogeneous NPU: the \textbf{Tensor Engine} is a 128$\times$128 systolic array that computes matrix multiplications; the \textbf{Vector Engine} and \textbf{Scalar Engine} operate on vectors for vector and scalar operations, such as reductions and activation functions; and the \textbf{GPSIMD Engine} is a general-purpose SIMD core that can compute arbitrary operations, including DMA operations. Engines communicate through two types of SRAM: SBUF, used to store any intermediate data, and PSUM, which is dedicated to the accumulation buffer of the Tensor Engine. Additionally, there is a \textbf{Sync Engine} that handles synchronization between instructions.
 
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=\linewidth]{fig01_trainium2_arch.png}
-  \caption{Trainium2 device diagram and the architecture of NeuronCore-v3, from the Neuron SDK documentation~\citep{neuron_trn2_arch}.}
+  \caption{Trainium 2 device diagram and the architecture of NeuronCore-v3, from the Neuron SDK documentation~\citep{neuron_trn2_arch}.}
   \label{fig:trn2}
 \end{figure}
 
@@ -103,11 +104,11 @@ Most Trainium users can run a model without worrying about the architecture. Tra
 \begin{figure}[!htbp]
   \centering
   \includegraphics[width=0.7\linewidth]{fig02_neuron_compiler_flow.png}
-  \caption{Model graphs enter through the graph compiler (left) and NKI kernels through the NKI compiler (right). Both meet in the compiler backend (Walrus), whose output is a NEFF file. Diagram from the AWS Neuron documentation~\citep{nki_about}.}
+  \caption{Model graphs enter through the graph compiler (left) and NKI kernels through the NKI compiler (right). Both meet in the compiler backend, whose output is a NEFF file. Diagram from the AWS Neuron documentation~\citep{nki_about}.}
   \label{fig:flow}
 \end{figure}
 
-NKI is powerful: the NKI compiler keeps the instructions, their order and the memory allocation that you write. What NKI does \emph{not} let you control is how the engines and instructions actually coordinate: which semaphore each instruction waits on, which DMA queue carries a transfer, and when the Scalar Engine reloads its activation-function tables. The compiler backend makes these decisions and writes them into its output, the \textbf{NEFF}, alongside one instruction stream per engine, the DMA descriptors and the memory map. Because the NEFF is the program that the Neuron runtime actually loads and runs, editing it directly gives us the control that NKI lacks. Hardcore GPU optimizers will recognize this programming layering (Table~\ref{tab:layering}): as NKI is the equivalent of Triton for GPUs, NEFF resembles SASS.
+However, NKI does not expose everything underneath the compiler. NKI does not let you control how the engines and instructions actually coordinate in finer-grain: which semaphore each instruction waits on, which DMA queue carries a transfer, and when the Scalar Engine reloads its activation-function tables. The compiler backend makes these decisions and writes them into its output, the \textbf{NEFF}, alongside one instruction stream per engine, the DMA descriptors and the memory map. Because the NEFF is the program that the Neuron runtime actually loads and runs, editing it directly gives us the direct control of hardware. Hardcore GPU optimizers will recognize this programming layering (Table~\ref{tab:layering}): as NKI is the equivalent of Triton for GPUs, NEFF resembles SASS, which is the assembly-based compiler output for NVIDIA GPUs \cite{nvidia_sass}.
 
 \begin{table}[h]
   \centering
@@ -124,7 +125,9 @@ NKI is powerful: the NKI compiler keeps the instructions, their order and the me
   \end{tabular}
 \end{table}
 
-This leaves real room for improvement. In a profile, the engines of an NKI kernel often sit idle for reasons the source does not show: an engine waiting on the wrong event, a transfer queued behind unrelated ones, a function table reloaded again and again. Fixing such problems in the NEFF alone made the kernels we studied from the NKI Library~\citep{nki_library}, AWS's open-source collection of optimized NKI kernels, 1.05$\times$ to 4.9$\times$ faster (Figure~\ref{fig:speedups}). In the case study, one change to a single semaphore wait is worth 3.0\us (6.8\%). Edits like these require knowing what a NEFF contains, so the following sections take it apart. We start with the container: how a NEFF is laid out on disk, and how to unpack, edit and repack it without the compiler.
+This leaves real room for improvement. In a profile, the engines of an NKI kernel often sit idle for reasons the source does not show: an engine waiting on the wrong event, a transfer queued behind unrelated ones, a function table reloaded again and again. This motivate us to do NEFF-based performance optimization: directly modify the NEFF to manage the instructions and memory access for lower latency of certain computations. We evaluated on various kernels in NKI Library~\citep{nki_library}, AWS's open-source collection of optimized NKI kernels, and achieved 1.05$\times$ to 4.9$\times$ speedup (Figure~\ref{fig:speedups}). We will show a case study for Gated DeltaNet kernel, which is a core computation in Qwen 3.5 models.
+
+Editting NEFF requires knowing what a NEFF contains. In the next section, we will start with illustrating the content of NEFF: how a NEFF is laid out on disk, and how to unpack, edit and repack it without the compiler.
 
 %=====================================================================
 \section{NEFF Container Structure and Metadata}
@@ -156,7 +159,7 @@ kernel.neff
     `-- sg01/                 Subgraph for physical core 1 (LNC=2 only)
 \end{lstlisting}
 
-A kernel compiled with LNC=2 has two subgraph directories, \code{sg00} and \code{sg01}, one per physical core. On Trainium2 a logical core spans at most two physical cores, so such a NEFF never has more than two subgraphs.
+A kernel compiled with \code{LNC=2} in the compiler option has two subgraph directories, \code{sg00} and \code{sg01}, one per physical core. On Trainium 2 a logical core spans at most two physical cores, so such a NEFF never has more than two subgraphs.
 
 The \textbf{header} holds what the runtime and tools need before they open the payload: the package version, the header size, the payload size, the number of logical cores and the number of physical cores per logical core. It also has feature flags, one bit per feature the program needs, such as \code{dge} (descriptor generation engine for issuing DMA requests) or \code{coalesced-cc} (coalesced collectives). Whenever the payload changes, the header must be updated to match.
 
@@ -255,7 +258,7 @@ We have not yet covered the most important part: the \textbf{instruction streams
 \section{Instructions and Pseudo-Instructions}
 \label{sec:instr}
 
-Based on the \code{neuron-dbg} disassembler tool, Trainium~2 has 128 instruction opcodes that share 82 instruction layouts. All of them follow a similar general pattern (Figure~\ref{fig:slot}). Bytes 0--3 are a header whose first byte is the opcode, which decides how the rest of the slot is read. Bytes 4--11 are the events block, and bytes 12--63 hold the operands and the settings of the specific operation.
+Trainium~2 has 128 instruction opcodes that share 82 instruction layouts. All of them follow a similar general pattern (Figure~\ref{fig:slot}). Bytes 0$\sim$3 are a header whose first byte is the opcode, which decides how the rest of the slot is read. Bytes 4$\sim$11 are the events block, and bytes 12$\sim$63 hold the operands and the settings of the specific operation.
 
 The \textbf{events} block is how an instruction synchronizes with the rest of the core. It contains the semaphore that this instruction waits for, the condition under which it may start (the semaphore must reach a threshold), and the semaphore that it updates when it finishes. The \textbf{operands} are tensors, each described by an address and an access pattern, the hardware form of NKI's \code{.ap(pattern=[[stride, count], ...], offset=...)}. The address encodes the start partition and the offset within it ($\text{partition} \times \text{0x40000} + \text{offset}$ for SBUF), and up to three \code{[step, count]} pairs (\code{step[3] num[3]} in Figure~\ref{fig:slot}) walk the free dimensions, in elements. The partition dimension is not part of the pattern: the number of partitions is a separate field, such as \code{num\_active\_channels} in \code{ACTIVATE}. DMA instructions use the same idea with byte-based patterns and addresses that can also point into HBM. The meaning of the remaining bytes varies by opcode. Full list of instruction layouts and opcode catalogue are in the NEFF documentation repository.
 
@@ -347,7 +350,7 @@ Figure~\ref{fig:sem} illustrates an example timeline of execution controlled by 
 \section{What Can We Do in NEFF but Not in NKI?}
 \label{sec:neffonly}
 
-Writing better NKI is always the first step to get a fairly good baseline. But a whole class of decisions is made by the compiler \textbf{after} the NKI source is written, and NKI 0.6.0 has no construct for them. Table~\ref{tab:control} compares the two levels.
+Writing better NKI is always the first step to get a fairly good baseline. But many scheduling decisions are made by the compiler \textbf{after} the NKI source is written. Table~\ref{tab:control} compares the two levels.
 
 \begin{table}[h]
   \centering
@@ -372,7 +375,7 @@ Writing better NKI is always the first step to get a fairly good baseline. But a
   \end{tabularx}
 \end{table}
 
-These NEFF-only levers matter in practice. Across the 12 kernels we studied, they include re-pointing a wait to the instruction that actually produces the data, deleting \code{EVENT\_SEMAPHORE} slots that synchronize nothing, moving transfers onto unused DMA queues (or new queues added to \code{def.json}), and deleting activation-table loads whose table is already resident. They are often the best gains per byte changed: a single re-pointed wait can be worth several percent of a kernel's latency.
+These NEFF-only levers matter in practice. Across the 12 kernels we studied, they include re-pointing a wait to the instruction that actually produces the data, deleting \code{EVENT\_SEMAPHORE} slots that synchronize nothing, moving transfers onto unused DMA queues (or new queues added to \code{def.json}), and deleting activation-table loads whose table is already resident. They are often the best gains per byte changed: a single change of instruction wait condition can be worth several percent of a kernel's latency.
 
 %=====================================================================
 \section{What Should We Modify for Better Performance?}
@@ -390,7 +393,7 @@ A NEFF has thousands of slots, and most of them are not worth editing. The first
     \toprule
     \textbf{Strategy} & \textbf{What to change in the NEFF} & \textbf{Typical gain} \\
     \midrule
-    \textbf{Remove unnecessary data movement.} Round trips through HBM that only reshape data, DMAs that repeat another DMA's copy or only signal completion, and small copies that compute can do
+    \textbf{Remove unnecessary data movement.} Round trips through HBM that only reshape data, DMAs that repeat another DMA's copy or only signal completion
       & Point DMAs straight at their final destination; replace a redundant DMA with a semaphore update; turn a small DMA into a \code{CAST} or \code{COPY}
       & The largest single wins; 0.6\us of issue plus 2--7\us of completion per DMA removed \\
     \textbf{Cut the fixed cost of DMAs.} Many small transfers, or transfers with one descriptor per element
@@ -451,7 +454,7 @@ We optimized the GDN kernel at the NEFF level in seven steps, achieving a 4.9$\t
 
 Our first step is to eliminate the long idle stretch in Figure~\ref{fig:profbase}. It is caused by DMA round trips between SBUF and HBM. Each stage of the kernel stores its result in an HBM tensor, and the next stage loads it back (Figure~\ref{fig:gdn}): the projected query, key and value vectors, the convolution output \code{conv\_out}, and the per-head inputs of the GDN block (\code{q\_bh}, \code{k\_bh}, \code{v\_bh} and \code{z\_bh}). In the NEFF, each of these becomes a pair of DMAs through a small DRAM buffer: a writer that stores a few bytes from each of the 128 partitions, and a reader that loads them back into SBUF. The reads complete in about 1.6\us, but each write takes 17 to 22\us to report completion, and about 30 of these transfers run in 5 to 6 dependent rounds.
 
-Instead, we remove the DRAM access at the NEFF level. Each writer and reader pair only copies data from one SBUF location to another, sometimes converting bf16 to fp32 on the way. It turns out that performing the SBUF copy and manipulation has significantly less wait time, and all 122\us saved come from idle time. The same result is possible in NKI with a careful rewrite of the kernel, but it breaks the reuse of \code{gdn\_conv1d\_decode} and \code{gdn\_tkg} as standalone kernels that other kernels also call. It is also hard to tell which DMAs are redundant from the profile alone, because the trace does not map one-to-one onto the kernel source.
+Instead, we remove the DRAM access at the NEFF level. Each writer and reader pair only copies data from one SBUF location to another, sometimes converting bf16 to fp32 on the way. It turns out that performing the SBUF copy and manipulation has significantly less wait time. The same result is possible in NKI with a careful rewrite of the kernel, but it breaks the reuse of \code{gdn\_conv1d\_decode} and \code{gdn\_tkg} as standalone kernels that other kernels also call. It is also hard to tell which DMAs are redundant from the profile alone, because the trace does not map one-to-one onto the kernel source.
 
 \subsection{Step 2: Remove DMAs that are duplicated or only signal completion (95.4\texorpdfstring{\us}{ us} to 83.2\texorpdfstring{\us}{ us}, 1.15\texorpdfstring{$\times$}{x})}
 
@@ -584,7 +587,7 @@ Nothing in this method is specific to GDN. We ran the same automated loop of edi
 %=====================================================================
 \section*{Acknowledgments}
 
-This work is supported by the AWS Build on Trainium program at UCLA. We used AutoHelix~\citep{autohelix} as the agentic loop harness to optimize the kernel, with special modifications to add constraints based on human experts.
+This work is supported by the AWS Build on Trainium program at UCLA. We used AutoHelix~\citep{autohelix} as the agentic loop harness to optimize the kernel, with special modifications to add constraints based on human experts. We would like to thank Ellen Hermansen from the Amazon Research Initiative team for providing AWS access and promotional credits, Amit Kachroo for providing technical insights in the Amazon Science Hub program, and James Hamilton for the continuous support on providing latest Trainium instances.
 
 \bibliographystyle{plain}
 \bibliography{references}
